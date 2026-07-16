@@ -18,6 +18,7 @@ enum RCCLI {
             case "calibrate": try calibrate(options)
             case "gen-session": try generateSession(options)
             case "analyze": try analyze(options)
+            case "selftest": try selfTest(options)
             default:
                 print("unknown command: \(command)")
                 printUsage()
@@ -47,6 +48,10 @@ enum RCCLI {
           analyze     --in FILE [--bpm 100] [--subdivision eighth]
                       [--latency-samples 600] [--target-offset-ms 0]
                       [--count-in-bars 1]      detect onsets + score vs grid
+          selftest    [--in ID] [--out ID] [--rate 48000] [--buffer 128]
+                      [--seconds 10]           calibrate, then loop the app's
+                                               own click back and verify the
+                                               full pipeline reads 0 ms
         """)
     }
 
@@ -235,6 +240,70 @@ enum RCCLI {
         drift:        \(String(format: "%+.2f ms/min", s.driftMsPerMin))
         lag-1 autocorr: \(String(format: "%+.2f", s.lag1))
         """)
+    }
+
+    // MARK: - selftest
+
+    /// End-to-end verification on real audio hardware (or a virtual loopback
+    /// device): measure the round-trip constant, then play the metronome
+    /// with output looped to input — every click must score 0 ms after
+    /// compensation. This validates engine, clock, detector, scorer and
+    /// stats as one system.
+    static func selfTest(_ options: [String: String]) throws {
+        let engine = try configuredEngine(options)
+        let config = engine.config!
+        let seconds = Double(options["seconds"] ?? "10") ?? 10
+
+        print("step 1: loopback calibration")
+        let calibration = try LoopbackCalibrator.measure(engine: engine)
+        print(String(format: "  round-trip: %.1f samples = %.2f ms (sd %.2f)",
+                     calibration.roundtripSamples, calibration.roundtripMs, calibration.sdSamples))
+
+        print("step 2: click through loopback, scored with compensation")
+        let spec = ClickGridSpec(bpm: 120, subdivision: .quarter, beatsPerBar: 4,
+                                 accentDownbeat: false, countInBars: 1)
+        let grid = ClickGrid(spec: spec, sampleRate: config.sampleRate)
+        try engine.start(grid: grid, sound: .woodblock, clickGain: 0.9, monitorGain: 0)
+        defer { engine.stop() }
+        guard let ctx = engine.context else { throw HALError.unsupported("no context") }
+
+        let detector = OnsetDetector(sampleRate: config.sampleRate)
+        let scorer = TimingScorer(grid: grid, latencyCompensationSamples: calibration.roundtripSamples)
+        let stats = StatsAccumulator(toleranceMs: 2, sampleRate: config.sampleRate)
+
+        var chunk = [Float](repeating: 0, count: 32768)
+        var consumed: Int64 = 0
+        let targetSamples = Int64(seconds * config.sampleRate)
+        let deadline = Date().addingTimeInterval(seconds + 10)
+        while consumed < targetSamples && Date() < deadline {
+            _ = ctx.dataAvailable.wait(timeout: .now() + 0.5)
+            while true {
+                let n = chunk.withUnsafeMutableBufferPointer {
+                    ctx.ring.read(into: $0.baseAddress!, maxCount: $0.count)
+                }
+                guard n > 0 else { break }
+                consumed += Int64(n)
+                chunk.withUnsafeBufferPointer { buf in
+                    detector.process(UnsafeBufferPointer(rebasing: buf[0..<n])) { onset in
+                        for event in scorer.onOnset(onset) { stats.add(event) }
+                    }
+                }
+            }
+        }
+        engine.stop()
+
+        let s = stats.snapshot()
+        let expectedClicks = Int(seconds * config.sampleRate / grid.samplesPerSlot) - grid.countInSlots
+        print(String(format: "  clicks scored: %d (expected ~%d)", s.hitCount, expectedClicks))
+        print(String(format: "  mean %+.3f ms · sd %.3f ms · min %+.2f · max %+.2f · in ±2 ms: %.0f%%",
+                     s.meanMs, s.sdMs, s.minMs, s.maxMs, s.pctInTolerance))
+
+        let pass = s.hitCount >= expectedClicks - 2
+            && abs(s.meanMs) <= 2.0
+            && s.sdMs <= 2.0
+            && s.pctInTolerance >= 90
+        print(pass ? "SELFTEST PASS" : "SELFTEST FAIL")
+        if !pass { exit(1) }
     }
 
     // MARK: - engine setup

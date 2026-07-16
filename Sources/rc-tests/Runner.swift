@@ -1,4 +1,5 @@
 import Foundation
+import RhythmCore
 
 @main
 struct Runner {
@@ -53,6 +54,25 @@ struct Runner {
         let e2e = EndToEndSessionTests()
         runTest("bias and jitter recovery") { e2e.biasAndJitterRecovery() }
         runTest("drift detection") { e2e.driftDetection() }
+
+        suite("StreamingWaveWriter")
+        runTest("incremental write == WaveFile read") {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("rc-stream-\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let writer = try StreamingWaveWriter(url: url, sampleRate: 48000)
+            var expected: [Float] = []
+            for chunkIndex in 0..<50 {
+                let chunk = (0..<377).map { Float($0 + chunkIndex) / 1000 }
+                expected.append(contentsOf: chunk)
+                try writer.append(chunk)
+            }
+            try writer.finalize()
+            let (read, sr) = try WaveFile.read(from: url)
+            expect(sr == 48000)
+            expect(read.count == expected.count)
+            expect(zip(read, expected).allSatisfy { $0 == $1 })
+        }
 
         suite("SPSCFloatRing")
         let ring = SPSCFloatRingTests()

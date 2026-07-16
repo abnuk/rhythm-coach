@@ -10,6 +10,13 @@ public struct CalibrationResult: Sendable, Codable {
 
     public var roundtripMs: Double { roundtripSamples / sampleRate * 1000 }
     public var sdMs: Double { sdSamples / sampleRate * 1000 }
+
+    public init(roundtripSamples: Double, sdSamples: Double, runs: Int, sampleRate: Double) {
+        self.roundtripSamples = roundtripSamples
+        self.sdSamples = sdSamples
+        self.runs = runs
+        self.sampleRate = sampleRate
+    }
 }
 
 /// Measures the real output->input round-trip latency: emits a train of
