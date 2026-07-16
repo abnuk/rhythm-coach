@@ -32,6 +32,25 @@ public enum Subdivision: String, Codable, Sendable, CaseIterable, Identifiable {
     }
 }
 
+/// Which grid slots produce an audible click. The analysis grid (scoring)
+/// always uses every slot — this only thins out what you HEAR, e.g. hear
+/// quarter-note clicks while your 16th-note playing is tracked per slot.
+public enum ClickDensity: String, Codable, Sendable, CaseIterable, Identifiable {
+    case everySlot
+    case beatsOnly
+    case downbeatsOnly
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .everySlot: "Every subdivision"
+        case .beatsOnly: "Beats only"
+        case .downbeatsOnly: "Bar starts only"
+        }
+    }
+}
+
 /// Gap-click: `barsOn` audible bars followed by `barsOff` silent bars,
 /// repeating. Silent bars are still part of the grid and still scored.
 public struct GapPattern: Codable, Sendable, Equatable {
@@ -50,28 +69,37 @@ public struct ClickGridSpec: Codable, Sendable, Equatable {
     public var subdivision: Subdivision
     public var beatsPerBar: Int
     public var accentDownbeat: Bool
+    /// What you hear; scoring always tracks every slot of `subdivision`.
+    public var clickDensity: ClickDensity
     public var gapPattern: GapPattern?
     public var countInBars: Int
     /// Practice target: intentionally play this many ms behind (+) or
     /// ahead (-) of the grid; scoring is relative to the shifted reference.
     public var targetOffsetMs: Double
+    /// When true, empty slots count as "missed". Turn off when playing
+    /// patterns with rests — only actual hits are then scored.
+    public var expectEverySlot: Bool
 
     public init(
         bpm: Double = 90,
         subdivision: Subdivision = .eighth,
         beatsPerBar: Int = 4,
         accentDownbeat: Bool = true,
+        clickDensity: ClickDensity = .everySlot,
         gapPattern: GapPattern? = nil,
         countInBars: Int = 1,
-        targetOffsetMs: Double = 0
+        targetOffsetMs: Double = 0,
+        expectEverySlot: Bool = true
     ) {
         self.bpm = bpm
         self.subdivision = subdivision
         self.beatsPerBar = beatsPerBar
         self.accentDownbeat = accentDownbeat
+        self.clickDensity = clickDensity
         self.gapPattern = gapPattern
         self.countInBars = countInBars
         self.targetOffsetMs = targetOffsetMs
+        self.expectEverySlot = expectEverySlot
     }
 }
 
@@ -123,9 +151,18 @@ public struct ClickGrid: Sendable {
         return inBar % spec.subdivision.slotsPerBeat == 0 ? .beat : .subdivision
     }
 
-    /// Whether the click for this slot is audible (count-in always is;
-    /// gap pattern silences whole bars after the count-in).
+    /// Whether the click for this slot is audible: the click density thins
+    /// slots by kind everywhere; the gap pattern silences whole bars after
+    /// the count-in (the count-in itself is never gapped).
     public func isAudible(slot index: Int) -> Bool {
+        switch spec.clickDensity {
+        case .everySlot:
+            break
+        case .beatsOnly:
+            if case .subdivision = kind(ofSlot: index) { return false }
+        case .downbeatsOnly:
+            guard case .downbeat = kind(ofSlot: index) else { return false }
+        }
         if index < countInSlots { return true }
         guard let gap = spec.gapPattern else { return true }
         let barAfterCountIn = bar(ofSlot: index) - spec.countInBars

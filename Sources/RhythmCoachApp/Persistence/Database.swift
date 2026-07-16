@@ -10,6 +10,7 @@ struct SessionRecord: Identifiable, Sendable, Hashable {
     var durationSec: Double
     var bpm: Double
     var subdivision: String
+    var clickDensity: String = ClickDensity.everySlot.rawValue
     var gapPattern: String?
     var targetOffsetMs: Double
     var sampleRate: Double
@@ -95,6 +96,7 @@ final class Database {
         )
         """)
         exec("CREATE INDEX IF NOT EXISTS hit_session ON hit(sessionId)")
+        addColumnIfMissing(table: "session", column: "clickDensity", ddl: "TEXT DEFAULT 'everySlot'")
         exec("""
         CREATE TABLE IF NOT EXISTS calibration (
           inputUID TEXT, outputUID TEXT, sampleRate REAL, bufferFrames INTEGER,
@@ -102,6 +104,17 @@ final class Database {
           PRIMARY KEY (inputUID, outputUID, sampleRate, bufferFrames)
         )
         """)
+    }
+
+    /// Adds a column to an existing table when older databases predate it.
+    private func addColumnIfMissing(table: String, column: String, ddl: String) {
+        var stmt: OpaquePointer?
+        sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil)
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if text(stmt, 1) == column { return }
+        }
+        exec("ALTER TABLE \(table) ADD COLUMN \(column) \(ddl)")
     }
 
     // MARK: - Sessions
@@ -112,7 +125,13 @@ final class Database {
 
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, """
-        INSERT OR REPLACE INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT OR REPLACE INTO session (
+          id, startedAt, durationSec, bpm, subdivision, gapPattern,
+          targetOffsetMs, sampleRate, bufferFrames, inputDeviceName,
+          latencyCompMs, latencySource, toleranceMs, audioPath,
+          hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
+          pctInTolerance, driftMsPerMin, lag1, clickDensity
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, session.id)
@@ -139,6 +158,7 @@ final class Database {
         sqlite3_bind_double(stmt, 22, session.pctInTolerance)
         sqlite3_bind_double(stmt, 23, session.driftMsPerMin)
         sqlite3_bind_double(stmt, 24, session.lag1)
+        bindText(stmt, 25, session.clickDensity)
         sqlite3_step(stmt)
 
         var hitStmt: OpaquePointer?
@@ -167,6 +187,7 @@ final class Database {
                 durationSec: sqlite3_column_double(stmt, 2),
                 bpm: sqlite3_column_double(stmt, 3),
                 subdivision: text(stmt, 4) ?? "quarter",
+                clickDensity: text(stmt, 24) ?? ClickDensity.everySlot.rawValue,
                 gapPattern: text(stmt, 5),
                 targetOffsetMs: sqlite3_column_double(stmt, 6),
                 sampleRate: sqlite3_column_double(stmt, 7),

@@ -52,6 +52,51 @@ import RhythmCore
         expect(abs(grid.sampleTime(ofSlot: 3) - perBeat) < 1e-9)
         expect(abs(grid.sampleTime(ofSlot: 1) - perBeat / 3) < 1e-9)
     }
+
+    /// Hear 1/4, track 1/16: density thins audible clicks to beats while
+    /// every slot remains part of the scored grid.
+    func clickDensity() {
+        let beats = ClickGrid(
+            spec: ClickGridSpec(bpm: 120, subdivision: .sixteenth, beatsPerBar: 4,
+                                clickDensity: .beatsOnly, countInBars: 1),
+            sampleRate: 44100
+        )
+        for slot in 0..<64 {
+            expect(beats.isAudible(slot: slot) == (slot % 4 == 0),
+                   "beatsOnly slot \(slot): audible=\(beats.isAudible(slot: slot))")
+        }
+
+        let bars = ClickGrid(
+            spec: ClickGridSpec(bpm: 120, subdivision: .eighth, beatsPerBar: 4,
+                                clickDensity: .downbeatsOnly, countInBars: 0),
+            sampleRate: 44100
+        )
+        for slot in 0..<32 {
+            expect(bars.isAudible(slot: slot) == (slot % 8 == 0),
+                   "downbeatsOnly slot \(slot)")
+        }
+
+        // Density composes with the gap pattern: beat clicks only, and only
+        // in non-gapped bars; count-in keeps its beat clicks.
+        let gapped = ClickGrid(
+            spec: ClickGridSpec(bpm: 120, subdivision: .sixteenth, beatsPerBar: 4,
+                                clickDensity: .beatsOnly,
+                                gapPattern: GapPattern(barsOn: 1, barsOff: 1), countInBars: 1),
+            sampleRate: 44100
+        )
+        let slotsPerBar = gapped.slotsPerBar
+        for slot in 0..<(slotsPerBar * 6) {
+            let onBeat = slot % 4 == 0
+            let bar = slot / slotsPerBar
+            let expected: Bool
+            if bar == 0 {
+                expected = onBeat  // count-in
+            } else {
+                expected = onBeat && (bar - 1) % 2 == 0
+            }
+            expect(gapped.isAudible(slot: slot) == expected, "gap+density slot \(slot)")
+        }
+    }
 }
 
 @MainActor struct TimingScorerTests {
@@ -144,6 +189,28 @@ import RhythmCore
         let missedSlots = missed.compactMap { if case .missed(let s) = $0 { s } else { nil } }
         expect(missedSlots.contains(4) && missedSlots.contains(5) && missedSlots.contains(6))
         expect(!missedSlots.contains(0), "count-in slots never reported missed")
+    }
+
+    /// With expectEverySlot off, empty slots produce no missed events but
+    /// hits are still scored normally.
+    func restsAllowed() {
+        let spec = ClickGridSpec(bpm: 120, subdivision: .sixteenth, countInBars: 1,
+                                 expectEverySlot: false)
+        let grid = ClickGrid(spec: spec, sampleRate: sampleRate)
+        let scorer = TimingScorer(grid: grid, latencyCompensationSamples: 0)
+
+        // Play only every other slot.
+        for slot in stride(from: grid.countInSlots, to: grid.countInSlots + 16, by: 2) {
+            let events = scorer.onOnset(Onset(sampleTime: grid.sampleTime(ofSlot: slot) + 0.002 * sampleRate, strength: 1))
+            guard case .hit(let hit)? = events.first else {
+                recordIssue("expected hit at slot \(slot)")
+                return
+            }
+            expect(abs(hit.deviationMs - 2) < 1e-9)
+        }
+        let missed = scorer.advance(to: grid.sampleTime(ofSlot: grid.countInSlots + 32))
+        expect(missed.isEmpty, "no missed events expected with rests allowed, got \(missed.count)")
+        expect(scorer.hits.count == 8)
     }
 }
 

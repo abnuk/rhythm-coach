@@ -87,8 +87,10 @@ public final class TimingScorer {
 
     /// Advances stream time; emits `.missed` for slots whose matching window
     /// has fully passed without a hit. `rawSampleTime` is uncompensated
-    /// (same timeline the detector reports in).
+    /// (same timeline the detector reports in). No-op when the spec does not
+    /// expect a note on every slot (patterns with rests).
     public func advance(to rawSampleTime: Double) -> [ScoredEvent] {
+        guard grid.spec.expectEverySlot else { return [] }
         let adjusted = rawSampleTime - latencyCompensationSamples
         let lastPassed = Int(floor((adjusted - targetOffsetSamples - windowSamples) / grid.samplesPerSlot))
         guard lastPassed > highestFullyPassedSlot else { return [] }

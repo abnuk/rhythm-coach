@@ -41,6 +41,10 @@ final class TransportController {
     var subdivision: Subdivision = .eighth
     var beatsPerBar: Int = 4
     var accentDownbeat = true
+    /// What you hear; analysis always tracks every slot of `subdivision`.
+    var clickDensity: ClickDensity = .everySlot
+    /// Off = playing patterns with rests; empty slots are not "missed".
+    var expectEverySlot = true
     var gapClickEnabled = false
     var gapBarsOn = 2
     var gapBarsOff = 2
@@ -164,9 +168,11 @@ final class TransportController {
             subdivision: subdivision,
             beatsPerBar: beatsPerBar,
             accentDownbeat: accentDownbeat,
+            clickDensity: clickDensity,
             gapPattern: gapClickEnabled ? GapPattern(barsOn: gapBarsOn, barsOff: gapBarsOff) : nil,
             countInBars: countInBars,
-            targetOffsetMs: targetOffsetMs
+            targetOffsetMs: targetOffsetMs,
+            expectEverySlot: expectEverySlot
         )
     }
 
@@ -261,6 +267,7 @@ final class TransportController {
             durationSec: duration,
             bpm: grid.spec.bpm,
             subdivision: grid.spec.subdivision.rawValue,
+            clickDensity: grid.spec.clickDensity.rawValue,
             gapPattern: grid.spec.gapPattern.map { "\($0.barsOn)/\($0.barsOff)" },
             targetOffsetMs: grid.spec.targetOffsetMs,
             sampleRate: sampleRate,

@@ -22,6 +22,7 @@ struct Runner {
         runTest("slot kinds") { grid.slotKinds() }
         runTest("gap pattern") { grid.gapPattern() }
         runTest("triplets") { grid.triplets() }
+        runTest("click density decoupled from tracking") { grid.clickDensity() }
 
         suite("TimingScorer")
         let scorer = TimingScorerTests()
@@ -30,6 +31,7 @@ struct Runner {
         runTest("target offset mode") { scorer.targetOffset() }
         runTest("slot contention") { scorer.slotContention() }
         runTest("extra and missed") { scorer.extraAndMissed() }
+        runTest("rests allowed (expectEverySlot off)") { scorer.restsAllowed() }
 
         suite("Stats")
         let stats = StatsTests()
@@ -48,6 +50,7 @@ struct Runner {
         suite("ClickRenderer")
         let renderer = ClickRendererTests()
         runTest("sample accuracy across callbacks") { renderer.sampleAccuracy() }
+        runTest("beats-only density renders quarter clicks") { renderer.densityAudio() }
         runTest("gap bars silent") { renderer.gapSilence() }
 
         suite("End-to-end simulated session")

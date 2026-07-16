@@ -41,12 +41,22 @@ struct PracticeView: View {
                         .monospacedDigit()
                         .frame(width: 36, alignment: .trailing)
                 }
-                Picker("Grid", selection: $transport.subdivision) {
+                Picker("Grid (tracked)", selection: $transport.subdivision) {
                     ForEach(Subdivision.allCases) { sub in
                         Text(sub.displayName).tag(sub)
                     }
                 }
                 .pickerStyle(.segmented)
+                Picker("Click on", selection: $transport.clickDensity) {
+                    ForEach(ClickDensity.allCases) { density in
+                        Text(density.displayName).tag(density)
+                    }
+                }
+                if transport.clickDensity != .everySlot && transport.subdivision != .quarter {
+                    Text("You hear \(transport.clickDensity == .beatsOnly ? "quarter-note clicks" : "one click per bar"); every \(transport.subdivision.displayName) you play is still tracked.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Picker("Sound", selection: $transport.clickSound) {
                     ForEach(ClickSound.allCases) { sound in
                         Text(sound.displayName).tag(sound)
@@ -84,6 +94,12 @@ struct PracticeView: View {
                     ForEach([5.0, 10, 15, 20, 30], id: \.self) { tolerance in
                         Text("±\(Int(tolerance)) ms").tag(tolerance)
                     }
+                }
+                Toggle("Expect a note on every slot", isOn: $transport.expectEverySlot)
+                if !transport.expectEverySlot {
+                    Text("Empty slots are not counted as missed — for patterns with rests.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -359,6 +375,11 @@ extension SessionRecord {
     var subtitle: String {
         let sub = Subdivision(rawValue: subdivision)?.displayName ?? subdivision
         var parts = ["\(Int(bpm)) BPM \(sub)"]
+        switch ClickDensity(rawValue: clickDensity) {
+        case .beatsOnly: parts.append("click on beats")
+        case .downbeatsOnly: parts.append("click on bars")
+        default: break
+        }
         if let gap = gapPattern { parts.append("gap \(gap)") }
         if targetOffsetMs != 0 { parts.append(String(format: "target %+d ms", Int(targetOffsetMs))) }
         return parts.joined(separator: " · ")

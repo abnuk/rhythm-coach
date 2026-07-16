@@ -43,9 +43,13 @@ beat) from **stability** (how consistent you are).
 ## Training features
 
 - Grid subdivisions: 1/4, 1/8, 1/16, and triplets (1/8T, 1/16T)
+- **Click density decoupled from tracking**: hear quarter-note clicks (or one
+  per bar) while every 16th you play is still scored against the full grid
 - **Target-offset mode**: practice sitting e.g. 15 ms *behind* the beat —
   scoring is relative to the shifted reference
 - **Gap click**: N bars on / M bars silent (silent bars still scored)
+- **Rest-friendly scoring**: optionally stop counting empty slots as
+  "missed" when practicing patterns with rests
 - Count-in, accent patterns, three synthesized click sounds
 - Optional input monitoring through the app (guitar + click in headphones)
 - Session audio recorded to WAV for review

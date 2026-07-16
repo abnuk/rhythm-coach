@@ -47,6 +47,42 @@ import RhythmCore
         }
     }
 
+    /// Grid 1/16 with beats-only clicks: audio contains exactly the
+    /// quarter-note clicks, nothing on the tracked-but-silent slots.
+    func densityAudio() {
+        let sampleRate = 44100.0
+        let spec = ClickGridSpec(bpm: 120, subdivision: .sixteenth, beatsPerBar: 4,
+                                 clickDensity: .beatsOnly, countInBars: 0)
+        let grid = ClickGrid(spec: spec, sampleRate: sampleRate)
+        let renderer = ClickRenderer(grid: grid, sound: .woodblock)
+
+        let totalFrames = Int(sampleRate * 4)
+        var output = [Float](repeating: 0, count: totalFrames)
+        var start = 0
+        while start < totalFrames {
+            let frames = min(128, totalFrames - start)
+            output.withUnsafeMutableBufferPointer { buf in
+                renderer.render(into: buf.baseAddress! + start, frames: frames,
+                                startSample: Int64(start), gain: 1.0)
+            }
+            start += frames
+        }
+
+        var starts: [Int] = []
+        var lastLoud = -1000
+        for i in 0..<totalFrames where abs(output[i]) > 1e-7 {
+            if i - lastLoud > 100 { starts.append(i) }
+            lastLoud = i
+        }
+
+        // 120 BPM quarters = every 22050 samples; 4 s → 8 clicks, not 32.
+        expect(starts.count == 8, "expected 8 beat clicks, found \(starts.count)")
+        for (index, clickStart) in starts.enumerated() {
+            let expected = Int((Double(index) * grid.samplesPerBeat).rounded())
+            expect(abs(clickStart - expected) <= 3, "click \(index) at \(clickStart) vs \(expected)")
+        }
+    }
+
     func gapSilence() {
         let sampleRate = 44100.0
         let spec = ClickGridSpec(bpm: 120, subdivision: .quarter, beatsPerBar: 4,
