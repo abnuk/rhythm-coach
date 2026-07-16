@@ -22,6 +22,9 @@ public final class RealtimeContext: @unchecked Sendable {
     let sampleCounter = Atomic<Int64>(0)
     let clickGainBits = Atomic<UInt32>(Float(0.8).bitPattern)
     let monitorGainBits = Atomic<UInt32>(Float(0).bitPattern)
+    /// When false (monitor-only mode) input is not shipped to the analysis
+    /// ring and the wake-up semaphore stays quiet.
+    let captureEnabled = Atomic<Bool>(true)
     let overloads = Atomic<Int>(0)
     /// Anchor pair (sampleCounter, hostTime) refreshed ~1x/s for diagnostics.
     let anchorSample = Atomic<Int64>(0)
@@ -58,6 +61,10 @@ public final class RealtimeContext: @unchecked Sendable {
 
     public func setMonitorGain(_ gain: Float) {
         monitorGainBits.store(gain.bitPattern, ordering: .relaxed)
+    }
+
+    public func setCaptureEnabled(_ enabled: Bool) {
+        captureEnabled.store(enabled, ordering: .relaxed)
     }
 
     /// The realtime callback body.
@@ -118,8 +125,11 @@ public final class RealtimeContext: @unchecked Sendable {
             for i in 0..<frames { monoScratch[i] = 0 }
         }
 
-        // 2. Ship input to the analysis thread.
-        ring.write(monoScratch, count: frames)
+        // 2. Ship input to the analysis thread (skipped in monitor-only mode).
+        let capture = captureEnabled.load(ordering: .relaxed)
+        if capture {
+            ring.write(monoScratch, count: frames)
+        }
 
         // 3. Render the click for this buffer.
         for i in 0..<frames { clickScratch[i] = 0 }
@@ -150,6 +160,8 @@ public final class RealtimeContext: @unchecked Sendable {
         }
 
         // 6. Wake the analysis thread.
-        dataAvailable.signal()
+        if capture {
+            dataAvailable.signal()
+        }
     }
 }

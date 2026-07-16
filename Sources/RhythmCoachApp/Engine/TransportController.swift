@@ -13,14 +13,28 @@ final class TransportController {
     // MARK: Audio configuration
     var devices: [AudioDeviceInfo] = []
     var inputDeviceID: AudioDeviceID? {
-        didSet { UserDefaults.standard.set(inputDeviceUID, forKey: "inputUID"); refreshLatencyInfo() }
+        didSet {
+            UserDefaults.standard.set(inputDeviceUID, forKey: "inputUID")
+            refreshLatencyInfo()
+            restartIdleMonitoringIfActive()
+        }
     }
     var outputDeviceID: AudioDeviceID? {
-        didSet { UserDefaults.standard.set(outputDeviceUID, forKey: "outputUID"); refreshLatencyInfo() }
+        didSet {
+            UserDefaults.standard.set(outputDeviceUID, forKey: "outputUID")
+            refreshLatencyInfo()
+            restartIdleMonitoringIfActive()
+        }
     }
-    var sampleRate: Double = 48000 { didSet { refreshLatencyInfo() } }
-    var bufferFrames: Int = 128 { didSet { refreshLatencyInfo() } }
-    var inputChannel: Int = 0
+    var sampleRate: Double = 48000 {
+        didSet { refreshLatencyInfo(); restartIdleMonitoringIfActive() }
+    }
+    var bufferFrames: Int = 128 {
+        didSet { refreshLatencyInfo(); restartIdleMonitoringIfActive() }
+    }
+    var inputChannel: Int = 0 {
+        didSet { restartIdleMonitoringIfActive() }
+    }
 
     // MARK: Click configuration
     var bpm: Double = 90
@@ -36,8 +50,14 @@ final class TransportController {
     var clickGain: Double = 0.7 {
         didSet { engine.context?.setClickGain(Float(clickGain)) }
     }
+    /// Input monitoring works both during a session and standalone: with the
+    /// metronome stopped, the duplex engine keeps running in monitor-only
+    /// mode (click muted, capture disabled).
     var monitorEnabled = false {
-        didSet { engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0) }
+        didSet {
+            engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0)
+            updateIdleMonitoring()
+        }
     }
     var monitorGain: Double = 0.8 {
         didSet { engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0) }
@@ -68,6 +88,7 @@ final class TransportController {
     private var pollTask: Task<Void, Never>?
     private var currentGrid: ClickGrid?
     private var latencySource = "reported"
+    private var isMonitoringIdle = false
 
     init() {
         refreshDevices()
@@ -155,6 +176,7 @@ final class TransportController {
             lastError = "Select input and output devices in Audio Setup"
             return
         }
+        stopIdleMonitoring()
         lastError = nil
         finishedSession = nil
 
@@ -272,6 +294,55 @@ final class TransportController {
             try? FileManager.default.removeItem(at: url)
         }
         sessionStart = nil
+        // Resume standalone monitoring if the user keeps it enabled.
+        updateIdleMonitoring()
+    }
+
+    // MARK: - Idle (metronome-stopped) monitoring
+
+    private func updateIdleMonitoring() {
+        guard !isRunning, !isCalibrating else { return }
+        if monitorEnabled && !isMonitoringIdle {
+            startIdleMonitoring()
+        } else if !monitorEnabled && isMonitoringIdle {
+            stopIdleMonitoring()
+        }
+    }
+
+    private func startIdleMonitoring() {
+        guard let input = inputDeviceID, let output = outputDeviceID else { return }
+        do {
+            try engine.configure(DuplexEngine.EngineConfig(
+                inputDevice: input, outputDevice: output,
+                sampleRate: sampleRate, bufferFrames: bufferFrames,
+                inputChannel: inputChannel
+            ))
+            // Any grid works: the click is muted and capture is off.
+            let grid = ClickGrid(
+                spec: ClickGridSpec(bpm: 120, subdivision: .quarter, countInBars: 0),
+                sampleRate: sampleRate
+            )
+            try engine.start(grid: grid, sound: clickSound, clickGain: 0,
+                             monitorGain: Float(monitorGain))
+            engine.context?.setCaptureEnabled(false)
+            isMonitoringIdle = true
+            lastError = nil
+        } catch {
+            lastError = "Monitoring failed: \(error)"
+            isMonitoringIdle = false
+        }
+    }
+
+    private func stopIdleMonitoring() {
+        guard isMonitoringIdle else { return }
+        engine.stop()
+        isMonitoringIdle = false
+    }
+
+    private func restartIdleMonitoringIfActive() {
+        guard isMonitoringIdle else { return }
+        stopIdleMonitoring()
+        updateIdleMonitoring()
     }
 
     // MARK: - Calibration
@@ -282,6 +353,9 @@ final class TransportController {
             calibrationMessage = "Select devices first"
             return
         }
+        // Pause standalone monitoring: with a physical loopback cable the
+        // input→output passthrough would feed back into the measurement.
+        stopIdleMonitoring()
         isCalibrating = true
         calibrationMessage = "Measuring…"
 
@@ -321,6 +395,7 @@ final class TransportController {
                 case .failure(let error):
                     self.calibrationMessage = "\(error)"
                 }
+                self.updateIdleMonitoring()
             }
         }
     }

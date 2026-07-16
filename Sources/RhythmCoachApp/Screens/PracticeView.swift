@@ -94,6 +94,9 @@ struct PracticeView: View {
                         Text("Level")
                         Slider(value: $transport.monitorGain, in: 0...1.5)
                     }
+                    Text("Monitoring stays on while the metronome is stopped.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Toggle("Record session audio", isOn: $transport.recordAudio)
                     .disabled(transport.isRunning)
