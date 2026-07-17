@@ -141,8 +141,8 @@ final class TransportController {
     var recordAudio = Persisted.bool("settings.recordAudio", true) {
         didSet { UserDefaults.standard.set(recordAudio, forKey: "settings.recordAudio") }
     }
-    /// Custom session name; empty = automatic date/tempo/grid naming
-    /// (the session is then stored unnamed and history shows its metadata).
+    /// Custom session name; empty = "Untitled" (the session is then stored
+    /// unnamed and history shows its metadata).
     var sessionName: String = UserDefaults.standard.string(forKey: "settings.sessionName") ?? "" {
         didSet { UserDefaults.standard.set(sessionName, forKey: "settings.sessionName") }
     }
@@ -218,19 +218,6 @@ final class TransportController {
         // didSet does not run for restored initial values: if monitoring was
         // left on last time, start it explicitly.
         updateIdleMonitoring()
-    }
-
-    /// Default name for the next take when no custom name is set, mirroring
-    /// the label history rows fall back to.
-    var autoSessionName: String {
-        var parts = ["\(Int(bpm)) BPM \(subdivision.displayName)"]
-        switch clickDensity {
-        case .beatsOnly: parts.append("click on beats")
-        case .downbeatsOnly: parts.append("click on bars")
-        case .everySlot: break
-        }
-        let date = Date().formatted(.dateTime.day().month().hour().minute())
-        return "\(date) · \(parts.joined(separator: " · "))"
     }
 
     // MARK: - Devices

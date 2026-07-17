@@ -344,41 +344,62 @@ private struct LiveRollingChartsView: View {
     }
 }
 
-/// Session-name field above the Start button. `draft` mirrors the custom
-/// name, or the live auto name (date + tempo + grid) when none is set; while
-/// focused the mirror is frozen so the ticking clock cannot stomp typing.
-/// Committing an empty or unchanged auto text returns to auto mode — the
-/// session is then stored unnamed and history shows its metadata.
+/// Session title above the Start button: "Untitled" until renamed. The text
+/// itself is read-only — the pencil switches to a TextField (Enter/click-away
+/// commits, Esc cancels) and the chosen name persists as the default for the
+/// next launch. "Untitled"/empty keeps sessions stored unnamed, so history
+/// falls back to date + metadata.
 private struct SessionNameField: View {
     @Environment(TransportController.self) private var transport
     @State private var draft = ""
-    @State private var autoAtFocus: String?
+    @State private var isEditing = false
     @FocusState private var focused: Bool
 
+    private static let placeholder = "Untitled"
+
     var body: some View {
-        let display = transport.sessionName.isEmpty ? transport.autoSessionName : transport.sessionName
-        TextField("Session name", text: $draft)
-            .textFieldStyle(.roundedBorder)
-            .focused($focused)
-            .onAppear { draft = display }
-            .onChange(of: display) { _, newValue in
-                if !focused { draft = newValue }
-            }
-            .onChange(of: focused) { _, isFocused in
-                if isFocused {
-                    autoAtFocus = transport.sessionName.isEmpty ? draft : nil
-                } else {
-                    commit()
+        HStack(spacing: 8) {
+            if isEditing {
+                TextField(Self.placeholder, text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.title2.weight(.semibold))
+                    .focused($focused)
+                    .onAppear {
+                        // Same-turn focus on a just-inserted field is dropped;
+                        // defer one runloop turn.
+                        DispatchQueue.main.async { focused = true }
+                    }
+                    .onSubmit { commit() }
+                    .onExitCommand {
+                        isEditing = false
+                        focused = false
+                    }
+                    .onChange(of: focused) { _, isFocused in
+                        if !isFocused, isEditing { commit() }
+                    }
+            } else {
+                Text(transport.sessionName.isEmpty ? Self.placeholder : transport.sessionName)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(1)
+                Button {
+                    draft = transport.sessionName
+                    isEditing = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+                .help("Rename session")
+                Spacer()
             }
-            .onSubmit { commit() }
+        }
     }
 
     private func commit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        transport.sessionName = (trimmed.isEmpty || trimmed == autoAtFocus) ? "" : trimmed
-        autoAtFocus = nil
-        draft = transport.sessionName.isEmpty ? transport.autoSessionName : transport.sessionName
+        transport.sessionName = trimmed == Self.placeholder ? "" : trimmed
+        isEditing = false
+        focused = false
     }
 }
 
