@@ -36,6 +36,27 @@ public struct SuperFluxConfig: Codable, Sendable, Equatable {
     public var minIOIMs: Double
     /// Absolute novelty floor below which frames are treated as silence.
     public var silenceThreshold: Float
+    /// Attack-rise gate: on a period-smoothed waveform envelope, the max
+    /// within `attackPostMs` after the refined onset anchor must be at
+    /// least this factor above the *minimum* within `attackPreMs` before
+    /// it (dip-then-rise, the signature of a new note — even a soft ghost
+    /// under a louder ringing neighbour). A novelty peak on a smoothly
+    /// decaying tail shows no rise and is dropped instead of being
+    /// reported as a false early onset. The gate only accepts or drops an
+    /// onset; it never moves the anchor. Values <= 1.0 disable it. Note:
+    /// purely spectral onsets with no energy rise (legato, hammer-ons)
+    /// are gated out as well.
+    public var attackRiseRatio: Float
+    /// Attack gate, second condition: the post-anchor envelope max must
+    /// also reach this fraction of the pre-anchor envelope *max*. Guards
+    /// against slow beating swells rising out of a deep amplitude null,
+    /// which pass the dip-then-rise test but recover only a small part of
+    /// the recent crest within `attackPostMs`. Values <= 0 disable it.
+    public var attackCrestFraction: Float
+    /// Attack gate look-back window in milliseconds.
+    public var attackPreMs: Double
+    /// Attack gate look-ahead window in milliseconds.
+    public var attackPostMs: Double
 
     public init(
         fftSize: Int = 2048,
@@ -54,7 +75,11 @@ public struct SuperFluxConfig: Codable, Sendable, Equatable {
         postAvgMs: Double = 70,
         delta: Float = 0.05,
         minIOIMs: Double = 30,
-        silenceThreshold: Float = 0.01
+        silenceThreshold: Float = 0.01,
+        attackRiseRatio: Float = 1.5,
+        attackCrestFraction: Float = 0.4,
+        attackPreMs: Double = 25,
+        attackPostMs: Double = 10
     ) {
         self.fftSize = fftSize
         self.framesPerSecond = framesPerSecond
@@ -73,6 +98,10 @@ public struct SuperFluxConfig: Codable, Sendable, Equatable {
         self.delta = delta
         self.minIOIMs = minIOIMs
         self.silenceThreshold = silenceThreshold
+        self.attackRiseRatio = attackRiseRatio
+        self.attackCrestFraction = attackCrestFraction
+        self.attackPreMs = attackPreMs
+        self.attackPostMs = attackPostMs
     }
 }
 

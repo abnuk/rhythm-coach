@@ -47,7 +47,10 @@ enum RCCLI {
                       [--latency-samples 600]   synthesize a practice-take WAV
           analyze     --in FILE [--bpm 100] [--subdivision eighth]
                       [--latency-samples 600] [--target-offset-ms 0]
-                      [--count-in-bars 1]      detect onsets + score vs grid
+                      [--count-in-bars 1] [--dump-onsets]
+                      [--attack-ratio 1.5] [--attack-crest 0.4]
+                      [--attack-pre 25] [--attack-post 10]
+                                           detect onsets + score vs grid
           selftest    [--in ID] [--out ID] [--rate 48000] [--buffer 128]
                       [--seconds 10]           calibrate, then loop the app's
                                                own click back and verify the
@@ -213,7 +216,12 @@ enum RCCLI {
         let grid = gridFromOptions(options, sampleRate: sampleRate)
         let latencySamples = Double(options["latency-samples"] ?? "0") ?? 0
 
-        let detector = OnsetDetector(sampleRate: sampleRate)
+        var detectorConfig = SuperFluxConfig()
+        if let v = options["attack-ratio"].flatMap(Float.init) { detectorConfig.attackRiseRatio = v }
+        if let v = options["attack-crest"].flatMap(Float.init) { detectorConfig.attackCrestFraction = v }
+        if let v = options["attack-pre"].flatMap(Double.init) { detectorConfig.attackPreMs = v }
+        if let v = options["attack-post"].flatMap(Double.init) { detectorConfig.attackPostMs = v }
+        let detector = OnsetDetector(config: detectorConfig, sampleRate: sampleRate)
         let scorer = TimingScorer(grid: grid, latencyCompensationSamples: latencySamples)
         let stats = StatsAccumulator(toleranceMs: 15, sampleRate: sampleRate)
 
@@ -240,6 +248,17 @@ enum RCCLI {
         drift:        \(String(format: "%+.2f ms/min", s.driftMsPerMin))
         lag-1 autocorr: \(String(format: "%+.2f", s.lag1))
         """)
+
+        if options["dump-onsets"] != nil {
+            let targetOffsetSamples = grid.spec.targetOffsetMs / 1000 * sampleRate
+            print("\nonsets (t[s]  strength  slot  dev[ms]):")
+            for onset in onsets {
+                let adjusted = onset.sampleTime - latencySamples
+                let slot = grid.nearestSlot(to: adjusted - targetOffsetSamples)
+                let deviationMs = (adjusted - scorer.referenceSample(forSlot: slot)) / sampleRate * 1000
+                print(String(format: "  %8.3f  %6.3f  %5d  %+8.2f", onset.sampleTime / sampleRate, onset.strength, slot, deviationMs))
+            }
+        }
     }
 
     // MARK: - selftest

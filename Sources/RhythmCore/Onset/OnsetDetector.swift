@@ -44,6 +44,8 @@ public final class OnsetDetector {
     private let postAvgF: Int
     private let minIOIF: Int
     private let postWindowF: Int
+    private let attackPreSamples: Int
+    private let attackPostSamples: Int
     private var lastPeakFrame: Int = .min / 2
     private var lastEmittedSample: Double = -1e12
 
@@ -90,6 +92,8 @@ public final class OnsetDetector {
         self.postAvgF = frames(config.postAvgMs)
         self.minIOIF = max(1, frames(config.minIOIMs))
         self.postWindowF = max(postMaxF, postAvgF)
+        self.attackPreSamples = max(0, Int((config.attackPreMs / 1000 * sampleRate).rounded()))
+        self.attackPostSamples = max(1, Int((config.attackPostMs / 1000 * sampleRate).rounded()))
 
         // Novelty ring must span look-back + look-ahead comfortably.
         let noveltySpan = max(preAvgF, preMaxF) + postWindowF + 8
@@ -271,21 +275,43 @@ public final class OnsetDetector {
 
     /// Locates the attack in the raw waveform near the novelty peak using the
     /// maximum slope of a short-time RMS envelope, giving ~1-2 ms precision.
+    ///
+    /// The refined onset must then pass an attack gate evaluated on a
+    /// period-smoothed envelope: the smoothed max within `attackPostMs`
+    /// after the anchor must exceed the smoothed *minimum* within
+    /// `attackPreMs` before it by `attackRiseRatio` (dip-then-rise — a new
+    /// note, even a soft ghost under a louder ringing neighbour) and also
+    /// reach `attackCrestFraction` of the smoothed pre-anchor max (a slow
+    /// beating swell out of a deep null recovers only a small part of the
+    /// recent crest that fast). A novelty peak on a decaying tail passes
+    /// neither and is dropped instead of being reported as a false early
+    /// onset. The gate never moves the anchor: accepted onsets keep
+    /// exactly the times they had without it. The smoothing window spans
+    /// about one period of a low guitar string, so the gate's references
+    /// don't ride the intra-period ripple that the sharp envelope shows on
+    /// low notes.
     private func refineAndEmit(peakFrame: Int, fractional: Double, strength: Float, emit: (Onset) -> Void) {
         let windowCenter = Double(peakFrame) * Double(hopSize) + fractional * Double(hopSize) + Double(config.fftSize) / 2
         let half = config.fftSize / 2
-        var regionStart = Int64((windowCenter - Double(half) - Double(hopSize)).rounded())
-        var regionEnd = Int64((windowCenter + Double(half) + Double(hopSize)).rounded())
-        regionStart = max(regionStart, fifoStart, 0)
-        regionEnd = min(regionEnd, totalSamples)
-        let length = Int(regionEnd - regionStart)
-        guard length > 512 else {
+        let envWin = 128
+        let smoothWin = max(envWin, Int(0.012 * sampleRate))
+        // Classic refinement region; the anchor is searched only here.
+        let coreStart = max(Int64((windowCenter - Double(half) - Double(hopSize)).rounded()), fifoStart, 0)
+        let coreEnd = min(Int64((windowCenter + Double(half) + Double(hopSize)).rounded()), totalSamples)
+        let coreLength = Int(coreEnd - coreStart)
+        guard coreLength > 512 else {
             emitChecked(Onset(sampleTime: windowCenter, strength: strength), emit: emit)
             return
         }
+        // Extended region adds the gate's look-back/look-ahead audio (the
+        // FIFO keeps ~2*fftSize behind and postWindowF hops ahead of the
+        // core, so these extensions never clamp mid-stream).
+        let regionStart = max(coreStart - Int64(attackPreSamples + smoothWin), fifoStart, 0)
+        let regionEnd = min(coreEnd + Int64(attackPostSamples + smoothWin / 2), totalSamples)
+        let length = Int(regionEnd - regionStart)
+        let preActual = Int(coreStart - regionStart)
 
         // Short-time mean-absolute envelope (centered running mean over `envWin`).
-        let envWin = 128
         let fifoOffset = Int(regionStart - fifoStart)
         var region = [Float](repeating: 0, count: length)
         for i in 0..<length {
@@ -300,23 +326,56 @@ public final class OnsetDetector {
             if center >= 0 { envelope[center] = running / Float(envWin) }
         }
 
-        // Maximum slope of the envelope = attack anchor.
-        let step = 64
-        var bestSlope: Float = -.greatestFiniteMagnitude
-        var bestIndex = length / 2
         var peakEnv: Float = 0
-        for i in 0..<length where envelope[i] > peakEnv { peakEnv = envelope[i] }
+        for i in preActual..<min(preActual + coreLength, length) where envelope[i] > peakEnv { peakEnv = envelope[i] }
         guard peakEnv > 1e-6 else {
             emitChecked(Onset(sampleTime: windowCenter, strength: strength), emit: emit)
             return
         }
-        for i in step..<(length - envWin - step) {
+
+        // Maximum slope of the envelope = attack anchor (same search domain
+        // and values as the unextended region, shifted by preActual).
+        let step = 64
+        var bestSlope: Float = -.greatestFiniteMagnitude
+        var bestIndex = preActual + coreLength / 2
+        for i in (preActual + step)..<(preActual + coreLength - envWin - step) {
             let slope = envelope[i + step] - envelope[i - step]
             if slope > bestSlope {
                 bestSlope = slope
                 bestIndex = i
             }
         }
+
+        if config.attackRiseRatio > 1.0 {
+            var smoothed = [Float](repeating: 0, count: length)
+            running = 0
+            for i in 0..<length {
+                running += region[i]
+                if i >= smoothWin { running -= region[i - smoothWin] }
+                let center = i - smoothWin / 2
+                if center >= 0 { smoothed[center] = running / Float(smoothWin) }
+            }
+            // Pre window ends half a smoothing width before the anchor so it
+            // holds no attack energy; the post window starts at the anchor.
+            let preLo = max(0, bestIndex - smoothWin / 2 - attackPreSamples)
+            let preHi = min(max(preLo, bestIndex - smoothWin / 2), length - 1)
+            var preMin = Float.greatestFiniteMagnitude
+            var preMax: Float = 0
+            for i in preLo...preHi {
+                if smoothed[i] < preMin { preMin = smoothed[i] }
+                if smoothed[i] > preMax { preMax = smoothed[i] }
+            }
+            var postMax: Float = 0
+            for i in bestIndex...min(bestIndex + attackPostSamples, length - 1) where smoothed[i] > postMax {
+                postMax = smoothed[i]
+            }
+            let rises = postMax >= config.attackRiseRatio * preMin
+            let clearsCrest = postMax >= config.attackCrestFraction * preMax
+            if preMax >= 1e-7 && !(rises && clearsCrest) {
+                return  // no genuine energy rise: tail-swell novelty peak
+            }
+        }
+
         let refined = Double(regionStart) + Double(bestIndex)
         emitChecked(Onset(sampleTime: refined, strength: strength), emit: emit)
     }

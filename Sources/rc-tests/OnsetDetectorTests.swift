@@ -109,6 +109,106 @@ import RhythmCore
         assertOnsets(detector.detect(in: signal), expectedSamples: positions, toleranceMs: 5)
     }
 
+    /// A ringing low note with beating must yield exactly one onset — the
+    /// attack. Beat swells in the decay tail must not fire (they used to:
+    /// the whitener amplifies the tail and the envelope-slope refinement
+    /// anchored onto a swell, reporting a false early hit).
+    func decayTailNoFalseOnset() {
+        var signal = [Float](repeating: 0, count: Int(sampleRate * 4))
+        SignalGenerator.addNoiseFloor(&signal, amplitudeDb: -60)
+        let position = 11025
+        let note = SignalGenerator.beatingTailNote(duration: 3.0, sampleRate: sampleRate)
+        SignalGenerator.mix(note, into: &signal, at: position)
+
+        let detector = OnsetDetector(sampleRate: sampleRate)
+        let detected = detector.detect(in: signal)
+        expect(detected.count == 1,
+                "expected only the attack onset, got \(detected.map(\.sampleTime))")
+        if let first = detected.first {
+            let errorMs = (first.sampleTime - Double(position)) / sampleRate * 1000
+            expect(abs(errorMs) <= 5, "attack onset error \(errorMs) ms")
+        }
+    }
+
+    /// A soft ghost note played while the previous note still rings must
+    /// survive the attack-rise gate. The ghost is placed where its envelope
+    /// lift over the ringing tail is modest — just above the gate threshold —
+    /// to pin the gate's aggressiveness ceiling.
+    func ghostOverRingingTail() {
+        var signal = [Float](repeating: 0, count: Int(sampleRate * 4))
+        SignalGenerator.addNoiseFloor(&signal, amplitudeDb: -60)
+        let tailPosition = 11025
+        let ghostPosition = tailPosition + Int(1.2 * sampleRate)
+        let tail = SignalGenerator.beatingTailNote(duration: 3.0, sampleRate: sampleRate,
+                                                   damping: 0.99)
+        let ghost = SignalGenerator.pluck(frequency: 146.83, duration: 0.2, sampleRate: sampleRate,
+                                          amplitude: 0.12, damping: 0.99)
+        SignalGenerator.mix(tail, into: &signal, at: tailPosition)
+        SignalGenerator.mix(ghost, into: &signal, at: ghostPosition)
+
+        let detector = OnsetDetector(sampleRate: sampleRate)
+        assertOnsets(detector.detect(in: signal),
+                     expectedSamples: [tailPosition, ghostPosition], toleranceMs: 5)
+    }
+
+    /// A ghost buried deep under a barely-decayed tail (envelope lift below
+    /// the gate threshold) may be detected at the right time or dropped —
+    /// but must never be anchored early into the falling tail. This is the
+    /// exact user-visible failure: a marker on the decay slope, ~40 ms
+    /// before the actual attack.
+    func buriedGhostNoEarlyAnchor() {
+        var signal = [Float](repeating: 0, count: Int(sampleRate * 4))
+        SignalGenerator.addNoiseFloor(&signal, amplitudeDb: -60)
+        let tailPosition = 11025
+        let ghostPosition = tailPosition + Int(1.2 * sampleRate)
+        let tail = SignalGenerator.beatingTailNote(duration: 3.0, sampleRate: sampleRate)
+        let ghost = SignalGenerator.pluck(frequency: 146.83, duration: 0.2, sampleRate: sampleRate,
+                                          amplitude: 0.12, damping: 0.99)
+        SignalGenerator.mix(tail, into: &signal, at: tailPosition)
+        SignalGenerator.mix(ghost, into: &signal, at: ghostPosition)
+
+        let detector = OnsetDetector(sampleRate: sampleRate)
+        let detected = detector.detect(in: signal)
+        let forbidden = (Double(tailPosition) + 0.050 * sampleRate)
+            ..< (Double(ghostPosition) - 0.010 * sampleRate)
+        for onset in detected {
+            expect(!forbidden.contains(onset.sampleTime),
+                    "onset anchored into the decay tail at \(onset.sampleTime) " +
+                    "(\((onset.sampleTime - Double(ghostPosition)) / sampleRate * 1000) ms vs ghost)")
+        }
+    }
+
+    /// Chunked streaming must match offline on a signal that exercises the
+    /// attack-rise rejection path (the plain streamingEquivalence signal
+    /// never rejects anything).
+    func beatingTailStreamingEquivalence() {
+        var signal = [Float](repeating: 0, count: Int(sampleRate * 4))
+        SignalGenerator.addNoiseFloor(&signal, amplitudeDb: -60)
+        let note = SignalGenerator.beatingTailNote(duration: 3.0, sampleRate: sampleRate)
+        SignalGenerator.mix(note, into: &signal, at: 11025)
+
+        let offline = OnsetDetector(sampleRate: sampleRate).detect(in: signal)
+
+        let streaming = OnsetDetector(sampleRate: sampleRate)
+        var streamed: [Onset] = []
+        var index = 0
+        let chunk = 64
+        while index < signal.count {
+            let end = min(index + chunk, signal.count)
+            Array(signal[index..<end]).withUnsafeBufferPointer { buf in
+                streaming.process(buf) { streamed.append($0) }
+            }
+            index = end
+        }
+        streaming.flush { streamed.append($0) }
+
+        expect(streamed.count == offline.count,
+                "streamed \(streamed.map(\.sampleTime)) vs offline \(offline.map(\.sampleTime))")
+        for (a, b) in zip(streamed, offline) {
+            expect(abs(a.sampleTime - b.sampleTime) < 1.0)
+        }
+    }
+
     func streamingEquivalence() {
         var signal = [Float](repeating: 0, count: Int(sampleRate * 3))
         let positions = [9000, 30000, 60000, 95000, 120000]

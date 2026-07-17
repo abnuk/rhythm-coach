@@ -13,6 +13,10 @@ struct Runner {
         runTest("minIOI merges 25 ms double hit") { onset.minIOIMerging() }
         runTest("noise floor: no onsets") { onset.noiseFloorSilence() }
         runTest("quiet after loud (whitening)") { onset.quietAfterLoud() }
+        runTest("decay tail: no false onset") { onset.decayTailNoFalseOnset() }
+        runTest("ghost over ringing tail") { onset.ghostOverRingingTail() }
+        runTest("buried ghost: no early anchor") { onset.buriedGhostNoEarlyAnchor() }
+        runTest("streaming == offline (beating tail)") { onset.beatingTailStreamingEquivalence() }
         runTest("streaming == offline") { onset.streamingEquivalence() }
         runTest("WAV roundtrip") { try onset.wavRoundtrip() }
 
