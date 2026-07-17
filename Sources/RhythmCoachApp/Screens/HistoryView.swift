@@ -193,16 +193,21 @@ struct SessionDetailView: View {
 
                 if let path = session.audioPath {
                     if FileManager.default.fileExists(atPath: path) {
+                        let mixPath = session.clickMixPath.flatMap {
+                            FileManager.default.fileExists(atPath: $0) ? $0 : nil
+                        }
                         Text("Waveform").font(.headline)
                         WaveformSessionView(
                             audioURL: URL(fileURLWithPath: path),
+                            mixURL: mixPath.map { URL(fileURLWithPath: $0) },
                             grid: WaveformGridParams(record: session),
                             hits: WaveformHitMarker.markers(rows: hits, record: session)
                         )
                         .frame(height: 260)
                         HStack {
                             Button {
-                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                                let urls = [path, mixPath].compactMap { $0.map { URL(fileURLWithPath: $0) } }
+                                NSWorkspace.shared.activateFileViewerSelecting(urls)
                             } label: {
                                 Label("Show recording in Finder", systemImage: "waveform")
                             }

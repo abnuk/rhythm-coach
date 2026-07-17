@@ -16,6 +16,9 @@ public final class RealtimeContext: @unchecked Sendable {
     public let ring: SPSCFloatRing
     let renderer: ClickRenderer
     let inputChannel: Int
+    /// Absolute output ABL channels that receive the click + monitor signal;
+    /// all other output channels are muted.
+    let outputChannels: ClosedRange<Int>
     let maxFrames: Int
 
     /// Samples rendered so far == the shared session clock. RT thread writes.
@@ -36,10 +39,13 @@ public final class RealtimeContext: @unchecked Sendable {
     private let clickScratch: UnsafeMutablePointer<Float>
     private var framesSinceAnchor = 0
 
-    public init(grid: ClickGrid, sound: ClickSound, inputChannel: Int, maxFrames: Int = 4096, ringSeconds: Double = 8) {
+    public init(grid: ClickGrid, sound: ClickSound, inputChannel: Int,
+                outputChannels: ClosedRange<Int> = 0...Int.max,
+                maxFrames: Int = 4096, ringSeconds: Double = 8) {
         self.ring = SPSCFloatRing(capacity: Int(grid.sampleRate * ringSeconds))
         self.renderer = ClickRenderer(grid: grid, sound: sound)
         self.inputChannel = inputChannel
+        self.outputChannels = outputChannels
         self.maxFrames = maxFrames
         self.monoScratch = .allocate(capacity: maxFrames)
         self.monoScratch.initialize(repeating: 0, count: maxFrames)
@@ -135,19 +141,29 @@ public final class RealtimeContext: @unchecked Sendable {
         for i in 0..<frames { clickScratch[i] = 0 }
         renderer.render(into: clickScratch, frames: frames, startSample: start, gain: clickGain)
 
-        // 4. Write click + input monitoring into every output channel.
+        // 4. Write click + input monitoring into the selected output
+        //    channels; mute the rest explicitly.
+        var outputBase = 0
         for buf in outputABL {
             let channels = Int(buf.mNumberChannels)
             guard channels > 0, let data = buf.mData else { continue }
             let ptr = data.assumingMemoryBound(to: Float.self)
             let available = Int(buf.mDataByteSize) / (channels * MemoryLayout<Float>.size)
             let n = min(frames, available)
-            for i in 0..<n {
-                let sample = clickScratch[i] + monoScratch[i] * monitorGain
-                for c in 0..<channels {
-                    ptr[i * channels + c] = sample
+            let window = ChannelMapping.localWriteWindow(
+                bufferBase: outputBase, bufferChannels: channels, selected: outputChannels
+            )
+            if let window {
+                for i in 0..<n {
+                    let sample = clickScratch[i] + monoScratch[i] * monitorGain
+                    for c in 0..<channels {
+                        ptr[i * channels + c] = window.contains(c) ? sample : 0
+                    }
                 }
+            } else {
+                for i in 0..<(n * channels) { ptr[i] = 0 }
             }
+            outputBase += channels
         }
 
         // 5. Advance the shared clock, refresh the diagnostic anchor ~1x/s.

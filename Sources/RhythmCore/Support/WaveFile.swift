@@ -1,8 +1,9 @@
 import Foundation
 
 /// Minimal mono WAV reader/writer (PCM 16-bit and IEEE Float32).
-/// Used by tests, fixtures and the offline analysis path; the app records
-/// sessions through AVAudioFile but reads them back with this.
+/// Used by tests, fixtures, the offline analysis path, and for reading the
+/// temp WAV a session streams via StreamingWaveWriter before it is encoded
+/// to AAC (legacy takes stay WAV and load through here).
 public enum WaveFile {
     public enum WaveError: Error {
         case malformed(String)

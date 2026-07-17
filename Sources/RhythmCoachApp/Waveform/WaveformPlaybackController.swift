@@ -50,6 +50,20 @@ final class WaveformPlaybackController {
         stopTicking()
     }
 
+    /// Swaps the audio file while keeping position and play state — used to
+    /// A/B the raw take against the click-overlaid mix (shared timeline).
+    func switchSource(url: URL) {
+        let time = currentTime
+        let wasPlaying = isPlaying
+        stop()
+        load(url: url)
+        guard let player else { return }
+        let clamped = time.clamped(to: 0...duration)
+        player.currentTime = clamped
+        currentTime = clamped
+        if wasPlaying { play() }
+    }
+
     /// Works both paused and playing; clamps to the take.
     func seek(toSample sample: Double, sampleRate: Double) {
         guard let player, sampleRate > 0 else { return }

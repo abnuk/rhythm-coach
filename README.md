@@ -52,7 +52,11 @@ beat) from **stability** (how consistent you are).
   "missed" when practicing patterns with rests
 - Count-in, accent patterns, three synthesized click sounds
 - Optional input monitoring through the app (guitar + click in headphones)
-- Session audio recorded to WAV for review
+- DAW-style I/O routing: pick the input channel and the output stereo pair
+  (per-device, remembered across launches)
+- Session audio saved as two compact AAC files per take: the raw input and a
+  click-overlaid mix for review (the click is placed where you heard it,
+  using the session's latency compensation)
 
 ## Requirements & build
 
@@ -61,7 +65,7 @@ Line Tools** (full Xcode works too):
 
 ```sh
 ./Scripts/make-app.sh          # builds dist/RhythmCoach.app (release)
-swift run rc-tests             # hermetic test suite (32 tests)
+swift run rc-tests             # hermetic test suite (52 tests)
 swift run rc-cli devices       # headless harness: list devices
 ```
 

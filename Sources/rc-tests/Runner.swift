@@ -107,6 +107,20 @@ struct Runner {
             expect(zip(read, expected).allSatisfy { $0 == $1 })
         }
 
+        suite("SessionAudioCodec")
+        let codec = SessionAudioCodecTests()
+        runTest("AAC roundtrip length + transient alignment") { try codec.aacRoundtrip() }
+        runTest("click placed at slot + compensation") { try codec.clickPlacement() }
+        runTest("mix = input + click, equal lengths") { try codec.mixEqualsInputPlusClick() }
+        runTest("WaveformData.load dispatch wav/m4a") { try codec.waveformLoadDispatch() }
+        runTest("failed encode cleans partial outputs") { try codec.encodeFailureCleanup() }
+
+        suite("ChannelMapping")
+        let mapping = ChannelMappingTests()
+        runTest("output pair derivation") { mapping.pairDerivation() }
+        runTest("clamping of persisted selections") { mapping.clamping() }
+        runTest("local write window over ABL layouts") { mapping.writeWindow() }
+
         suite("SPSCFloatRing")
         let ring = SPSCFloatRingTests()
         runTest("wrap-around ordering") { ring.wrapAround() }

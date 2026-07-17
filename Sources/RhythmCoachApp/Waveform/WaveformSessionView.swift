@@ -75,6 +75,9 @@ struct WaveformGridParams: Sendable, Equatable {
 /// the slot's reference line showing the deviation.
 struct WaveformSessionView: View {
     let audioURL: URL
+    /// Click-overlaid mix sharing the input file's timeline; when present the
+    /// toolbar offers switching playback between the two.
+    let mixURL: URL?
     let grid: WaveformGridParams
     let hits: [WaveformHitMarker]
 
@@ -87,9 +90,11 @@ struct WaveformSessionView: View {
     @State private var phase: Phase = .loading
     @State private var viewport = WaveformViewport()
     @State private var playback = WaveformPlaybackController()
+    @State private var playMix = false
 
-    init(audioURL: URL, grid: WaveformGridParams, hits: [WaveformHitMarker]) {
+    init(audioURL: URL, mixURL: URL? = nil, grid: WaveformGridParams, hits: [WaveformHitMarker]) {
         self.audioURL = audioURL
+        self.mixURL = mixURL
         self.grid = grid
         self.hits = hits.sorted { $0.onsetWavSample < $1.onsetWavSample }
     }
@@ -129,6 +134,18 @@ struct WaveformSessionView: View {
             }
             .disabled(!playback.isAvailable)
             PlaybackTimeReadout(playback: playback)
+            if let mixURL {
+                Picker("Playback source", selection: $playMix) {
+                    Text("Input").tag(false)
+                    Text("With click").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .onChange(of: playMix) { _, mix in
+                    playback.switchSource(url: mix ? mixURL : audioURL)
+                }
+            }
             Divider().frame(height: 12)
             Button {
                 viewport.zoom(by: 0.5, anchorX: viewport.widthPoints / 2)
@@ -207,6 +224,7 @@ struct WaveformSessionView: View {
     private func load() async {
         phase = .loading
         playback.stop()
+        playMix = false
         let url = audioURL
         guard FileManager.default.fileExists(atPath: url.path) else {
             phase = .unavailable("Recording unavailable")

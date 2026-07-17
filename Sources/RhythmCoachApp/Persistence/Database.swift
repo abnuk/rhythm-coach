@@ -22,6 +22,9 @@ struct SessionRecord: Identifiable, Sendable, Hashable {
     /// nil for old rows and Custom-tolerance sessions.
     var targetLevel: String? = nil
     var audioPath: String?
+    /// Input + click overlay (.m4a); nil for legacy sessions and while the
+    /// post-session encode is still running (or when it failed).
+    var clickMixPath: String? = nil
     var hitCount: Int
     var missedCount: Int
     var extraCount: Int
@@ -104,24 +107,49 @@ final class Database {
         addColumnIfMissing(table: "session", column: "clickDensity", ddl: "TEXT DEFAULT 'everySlot'")
         addColumnIfMissing(table: "session", column: "beatsPerBar", ddl: "INTEGER")
         addColumnIfMissing(table: "session", column: "countInBars", ddl: "INTEGER")
+        addColumnIfMissing(table: "session", column: "clickMixPath", ddl: "TEXT")
         addColumnIfMissing(table: "session", column: "targetLevel", ddl: "TEXT")
+        // Older databases keyed calibration only on (inputUID, outputUID,
+        // sampleRate, bufferFrames). SQLite cannot extend a primary key in
+        // place, so rebuild once, carrying old rows over as channel 0 /
+        // pair 0 (they were measured with output on all channels, a
+        // superset of pair 0, and the round trip is channel-independent).
+        let calibrationNeedsRebuild = columnExists(table: "calibration", column: "inputUID")
+            && !columnExists(table: "calibration", column: "inputChannel")
+        if calibrationNeedsRebuild {
+            exec("ALTER TABLE calibration RENAME TO calibration_old")
+        }
         exec("""
         CREATE TABLE IF NOT EXISTS calibration (
           inputUID TEXT, outputUID TEXT, sampleRate REAL, bufferFrames INTEGER,
+          inputChannel INTEGER NOT NULL DEFAULT 0, outputPair INTEGER NOT NULL DEFAULT 0,
           roundtripSamples REAL, sdSamples REAL, runs INTEGER, createdAt REAL,
-          PRIMARY KEY (inputUID, outputUID, sampleRate, bufferFrames)
+          PRIMARY KEY (inputUID, outputUID, sampleRate, bufferFrames, inputChannel, outputPair)
         )
         """)
+        if calibrationNeedsRebuild {
+            exec("""
+            INSERT INTO calibration
+            SELECT inputUID, outputUID, sampleRate, bufferFrames, 0, 0,
+                   roundtripSamples, sdSamples, runs, createdAt FROM calibration_old
+            """)
+            exec("DROP TABLE calibration_old")
+        }
     }
 
-    /// Adds a column to an existing table when older databases predate it.
-    private func addColumnIfMissing(table: String, column: String, ddl: String) {
+    private func columnExists(table: String, column: String) -> Bool {
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         while sqlite3_step(stmt) == SQLITE_ROW {
-            if text(stmt, 1) == column { return }
+            if text(stmt, 1) == column { return true }
         }
+        return false
+    }
+
+    /// Adds a column to an existing table when older databases predate it.
+    private func addColumnIfMissing(table: String, column: String, ddl: String) {
+        guard !columnExists(table: table, column: column) else { return }
         exec("ALTER TABLE \(table) ADD COLUMN \(column) \(ddl)")
     }
 
@@ -139,8 +167,8 @@ final class Database {
           latencyCompMs, latencySource, toleranceMs, audioPath,
           hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
           pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar, countInBars,
-          targetLevel
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          clickMixPath, targetLevel
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, session.id)
@@ -170,7 +198,8 @@ final class Database {
         bindText(stmt, 25, session.clickDensity)
         bindInt(stmt, 26, session.beatsPerBar)
         bindInt(stmt, 27, session.countInBars)
-        bindText(stmt, 28, session.targetLevel)
+        bindText(stmt, 28, session.clickMixPath)
+        bindText(stmt, 29, session.targetLevel)
         sqlite3_step(stmt)
 
         var hitStmt: OpaquePointer?
@@ -189,7 +218,18 @@ final class Database {
 
     func sessions() -> [SessionRecord] {
         var stmt: OpaquePointer?
-        sqlite3_prepare_v2(db, "SELECT * FROM session ORDER BY startedAt DESC", -1, &stmt, nil)
+        // Explicit column list: positions are defined by this query, not by
+        // the table's ALTER history (which differs between databases that
+        // ran different app versions first).
+        sqlite3_prepare_v2(db, """
+        SELECT id, startedAt, durationSec, bpm, subdivision, gapPattern,
+               targetOffsetMs, sampleRate, bufferFrames, inputDeviceName,
+               latencyCompMs, latencySource, toleranceMs, audioPath,
+               hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
+               pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar,
+               countInBars, clickMixPath, targetLevel
+        FROM session ORDER BY startedAt DESC
+        """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         var result: [SessionRecord] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -208,8 +248,9 @@ final class Database {
                 latencyCompMs: sqlite3_column_double(stmt, 10),
                 latencySource: text(stmt, 11) ?? "reported",
                 toleranceMs: sqlite3_column_double(stmt, 12),
-                targetLevel: text(stmt, 27),
+                targetLevel: text(stmt, 28),
                 audioPath: text(stmt, 13),
+                clickMixPath: text(stmt, 27),
                 hitCount: Int(sqlite3_column_int(stmt, 14)),
                 missedCount: Int(sqlite3_column_int(stmt, 15)),
                 extraCount: Int(sqlite3_column_int(stmt, 16)),
@@ -245,8 +286,10 @@ final class Database {
     }
 
     func deleteSession(id: String) {
-        if let path = sessions().first(where: { $0.id == id })?.audioPath {
-            try? FileManager.default.removeItem(atPath: path)
+        if let session = sessions().first(where: { $0.id == id }) {
+            for path in [session.audioPath, session.clickMixPath].compactMap({ $0 }) {
+                try? FileManager.default.removeItem(atPath: path)
+            }
         }
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, "DELETE FROM hit WHERE sessionId = ?", -1, &stmt, nil)
@@ -259,34 +302,58 @@ final class Database {
         sqlite3_finalize(stmt)
     }
 
+    /// Repoints a session's audio files after the post-session AAC encode
+    /// replaced the temp WAV.
+    func updateSessionAudio(id: String, audioPath: String?, clickMixPath: String?) {
+        var stmt: OpaquePointer?
+        sqlite3_prepare_v2(db, "UPDATE session SET audioPath = ?, clickMixPath = ? WHERE id = ?", -1, &stmt, nil)
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, audioPath)
+        bindText(stmt, 2, clickMixPath)
+        bindText(stmt, 3, id)
+        sqlite3_step(stmt)
+    }
+
     // MARK: - Calibration
 
-    func saveCalibration(inputUID: String, outputUID: String, bufferFrames: Int, result: CalibrationResult) {
+    func saveCalibration(inputUID: String, outputUID: String, bufferFrames: Int,
+                         inputChannel: Int, outputPair: Int, result: CalibrationResult) {
         var stmt: OpaquePointer?
-        sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO calibration VALUES (?,?,?,?,?,?,?,?)", -1, &stmt, nil)
+        sqlite3_prepare_v2(db, """
+        INSERT OR REPLACE INTO calibration
+          (inputUID, outputUID, sampleRate, bufferFrames, inputChannel, outputPair,
+           roundtripSamples, sdSamples, runs, createdAt)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, inputUID)
         bindText(stmt, 2, outputUID)
         sqlite3_bind_double(stmt, 3, result.sampleRate)
         sqlite3_bind_int(stmt, 4, Int32(bufferFrames))
-        sqlite3_bind_double(stmt, 5, result.roundtripSamples)
-        sqlite3_bind_double(stmt, 6, result.sdSamples)
-        sqlite3_bind_int(stmt, 7, Int32(result.runs))
-        sqlite3_bind_double(stmt, 8, Date().timeIntervalSince1970)
+        sqlite3_bind_int(stmt, 5, Int32(inputChannel))
+        sqlite3_bind_int(stmt, 6, Int32(outputPair))
+        sqlite3_bind_double(stmt, 7, result.roundtripSamples)
+        sqlite3_bind_double(stmt, 8, result.sdSamples)
+        sqlite3_bind_int(stmt, 9, Int32(result.runs))
+        sqlite3_bind_double(stmt, 10, Date().timeIntervalSince1970)
         sqlite3_step(stmt)
     }
 
-    func calibration(inputUID: String, outputUID: String, sampleRate: Double, bufferFrames: Int) -> CalibrationResult? {
+    func calibration(inputUID: String, outputUID: String, sampleRate: Double, bufferFrames: Int,
+                     inputChannel: Int, outputPair: Int) -> CalibrationResult? {
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, """
         SELECT roundtripSamples, sdSamples, runs FROM calibration
         WHERE inputUID = ? AND outputUID = ? AND sampleRate = ? AND bufferFrames = ?
+          AND inputChannel = ? AND outputPair = ?
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, inputUID)
         bindText(stmt, 2, outputUID)
         sqlite3_bind_double(stmt, 3, sampleRate)
         sqlite3_bind_int(stmt, 4, Int32(bufferFrames))
+        sqlite3_bind_int(stmt, 5, Int32(inputChannel))
+        sqlite3_bind_int(stmt, 6, Int32(outputPair))
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return CalibrationResult(
             roundtripSamples: sqlite3_column_double(stmt, 0),
