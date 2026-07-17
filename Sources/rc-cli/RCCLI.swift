@@ -38,10 +38,16 @@ enum RCCLI {
           devices                          list audio devices with capabilities
           duplex      [--in ID] [--out ID] [--rate 48000] [--buffer 128]
                       [--seconds 3] [--bpm 120] [--click-gain 0.5]
-                      [--monitor-gain 0]      run the duplex engine
+                      [--monitor-gain 0] [--channel N] [--out-pair N]
+                                           run the duplex engine
           calibrate   [--in ID] [--out ID] [--rate 48000] [--buffer 128]
+                      [--channel N] [--out-pair N]
                                            loopback latency measurement
-                                           (loop output to input with a cable)
+                                           (loop output to input with a cable;
+                                           output goes only to the selected
+                                           stereo pair — with split in/out
+                                           devices a real loopback path into
+                                           the chosen input channel is needed)
           gen-session --out FILE [--bpm 100] [--subdivision eighth]
                       [--bias-ms 12] [--jitter-ms 3] [--slots 40]
                       [--latency-samples 600]   synthesize a practice-take WAV
@@ -52,9 +58,10 @@ enum RCCLI {
                       [--attack-pre 25] [--attack-post 10]
                                            detect onsets + score vs grid
           selftest    [--in ID] [--out ID] [--rate 48000] [--buffer 128]
-                      [--seconds 10]           calibrate, then loop the app's
-                                               own click back and verify the
-                                               full pipeline reads 0 ms
+                      [--seconds 10] [--channel N] [--out-pair N]
+                                           calibrate, then loop the app's
+                                           own click back and verify the
+                                           full pipeline reads 0 ms
         """)
     }
 
@@ -112,7 +119,7 @@ enum RCCLI {
             spec: ClickGridSpec(bpm: bpm, subdivision: .quarter, countInBars: 0),
             sampleRate: config.sampleRate
         )
-        print("duplex: device(s) in=\(config.inputDevice) out=\(config.outputDevice) sr=\(config.sampleRate) buffer=\(config.bufferFrames)")
+        print("duplex: device(s) in=\(config.inputDevice) out=\(config.outputDevice) sr=\(config.sampleRate) buffer=\(config.bufferFrames) in-ch=\(config.inputChannel) out-pair=\(config.outputPair)")
         if let latency = engine.reportedLatency() {
             print("reported latency: input \(latency.input.totalSamples) + output \(latency.output.totalSamples) = \(latency.input.totalSamples + latency.output.totalSamples) samples")
         }
@@ -342,6 +349,7 @@ enum RCCLI {
         let sampleRate = Double(options["rate"] ?? "48000") ?? 48000
         let buffer = Int(options["buffer"] ?? "128") ?? 128
         let channel = Int(options["channel"] ?? "0") ?? 0
+        let outPair = Int(options["out-pair"] ?? "0") ?? 0
 
         let engine = DuplexEngine()
         try engine.configure(DuplexEngine.EngineConfig(
@@ -349,7 +357,8 @@ enum RCCLI {
             outputDevice: outputDevice,
             sampleRate: sampleRate,
             bufferFrames: buffer,
-            inputChannel: channel
+            inputChannel: channel,
+            outputPair: outPair
         ))
         return engine
     }

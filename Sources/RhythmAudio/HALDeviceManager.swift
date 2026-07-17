@@ -88,6 +88,19 @@ public enum HALDeviceManager {
         return id == 0 ? nil : id
     }
 
+    /// Driver-provided input channel name (kAudioObjectPropertyElementName;
+    /// elements are 1-based — element 0 is the main element). Nil when the
+    /// driver publishes none, which is the common case.
+    public static func inputChannelName(of deviceID: AudioDeviceID, channel: Int) -> String? {
+        let addr = HAL.address(
+            kAudioObjectPropertyElementName,
+            scope: kAudioObjectPropertyScopeInput,
+            element: AudioObjectPropertyElement(channel + 1)
+        )
+        guard let name = try? HAL.getString(deviceID, addr), !name.isEmpty else { return nil }
+        return name
+    }
+
     public static func setNominalSampleRate(_ rate: Double, on deviceID: AudioDeviceID) throws {
         let current = try HAL.get(deviceID, HAL.address(kAudioDevicePropertyNominalSampleRate), default: 0.0)
         guard abs(current - rate) > 0.5 else { return }

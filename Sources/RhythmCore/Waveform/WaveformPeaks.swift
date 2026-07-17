@@ -112,7 +112,10 @@ public struct WaveformData: Sendable {
     }
 
     public static func load(url: URL) throws -> WaveformData {
-        let (samples, sampleRate) = try WaveFile.read(from: url)
+        // Legacy takes are raw WAV; newer ones are AAC .m4a.
+        let (samples, sampleRate) = url.pathExtension.lowercased() == "wav"
+            ? try WaveFile.read(from: url)
+            : try SessionAudioCodec.readMono(url: url)
         return WaveformData(samples: samples, sampleRate: sampleRate)
     }
 

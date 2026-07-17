@@ -15,6 +15,14 @@ final class TransportController {
     var inputDeviceID: AudioDeviceID? {
         didSet {
             UserDefaults.standard.set(inputDeviceUID, forKey: "inputUID")
+            refreshChannelChoices()
+            // Each device remembers its own channel selection (DAW-style);
+            // the != guard avoids a redundant idle-monitoring restart.
+            let restored = ChannelMapping.clampedInputChannel(
+                inputDeviceUID.map { UserDefaults.standard.integer(forKey: "inputChannel.\($0)") } ?? 0,
+                channelCount: inputDevice?.inputChannels ?? 1
+            )
+            if inputChannel != restored { inputChannel = restored }
             refreshLatencyInfo()
             restartIdleMonitoringIfActive()
         }
@@ -22,6 +30,12 @@ final class TransportController {
     var outputDeviceID: AudioDeviceID? {
         didSet {
             UserDefaults.standard.set(outputDeviceUID, forKey: "outputUID")
+            refreshChannelChoices()
+            let restored = ChannelMapping.clampedPairIndex(
+                outputDeviceUID.map { UserDefaults.standard.integer(forKey: "outputPair.\($0)") } ?? 0,
+                channelCount: outputDevice?.outputChannels ?? 2
+            )
+            if outputPair != restored { outputPair = restored }
             refreshLatencyInfo()
             restartIdleMonitoringIfActive()
         }
@@ -33,7 +47,23 @@ final class TransportController {
         didSet { refreshLatencyInfo(); restartIdleMonitoringIfActive() }
     }
     var inputChannel: Int = 0 {
-        didSet { restartIdleMonitoringIfActive() }
+        didSet {
+            if let uid = inputDeviceUID {
+                UserDefaults.standard.set(inputChannel, forKey: "inputChannel.\(uid)")
+            }
+            refreshLatencyInfo()
+            restartIdleMonitoringIfActive()
+        }
+    }
+    /// Stereo-pair index on the output device (0 = channels 1/2).
+    var outputPair: Int = 0 {
+        didSet {
+            if let uid = outputDeviceUID {
+                UserDefaults.standard.set(outputPair, forKey: "outputPair.\(uid)")
+            }
+            refreshLatencyInfo()
+            restartIdleMonitoringIfActive()
+        }
     }
 
     // MARK: Click configuration
@@ -91,6 +121,8 @@ final class TransportController {
     /// screen can keep showing the take's waveform.
     var lastSession: SessionRecord?
     var lastSessionHits: [Hit] = []
+    /// True while a finished take is being encoded to AAC in the background.
+    var isEncodingTake = false
 
     private let engine = DuplexEngine()
     private var pipeline: AnalysisPipeline?
@@ -98,6 +130,14 @@ final class TransportController {
     private var currentGrid: ClickGrid?
     private var latencySource = "reported"
     private var isMonitoringIdle = false
+    // Captured at start() so the offline mix uses exactly what the session
+    // (and its scorer) used, even if the user tweaks settings mid-take.
+    private var sessionSound: ClickSound = .woodblock
+    private var sessionClickGain: Float = 0.7
+    private var sessionCompSamples: Double = 0
+    /// Guards UI state against an old take's encode finishing after a newer
+    /// session already took over.
+    private var activeEncodeTakeID: String?
 
     init() {
         refreshDevices()
@@ -117,6 +157,7 @@ final class TransportController {
             outputDeviceID = devices.first(where: { $0.uid == savedOutputUID && $0.hasOutput })?.id
                 ?? HALDeviceManager.defaultOutputDevice()
         }
+        refreshChannelChoices()
         refreshLatencyInfo()
     }
 
@@ -124,6 +165,31 @@ final class TransportController {
     var outputDevice: AudioDeviceInfo? { devices.first { $0.id == outputDeviceID } }
     var inputDeviceUID: String? { inputDevice?.uid }
     var outputDeviceUID: String? { outputDevice?.uid }
+
+    struct InputChannelChoice: Identifiable, Hashable {
+        let index: Int
+        let label: String
+        var id: Int { index }
+    }
+
+    /// Cached per device change: labels may involve HAL string lookups.
+    private(set) var inputChannelChoices: [InputChannelChoice] = []
+    private(set) var outputPairChoices: [ChannelMapping.OutputPair] = []
+
+    private func refreshChannelChoices() {
+        if let device = inputDevice {
+            inputChannelChoices = (0..<device.inputChannels).map { index in
+                let name = HALDeviceManager.inputChannelName(of: device.id, channel: index)
+                return InputChannelChoice(
+                    index: index,
+                    label: name.map { "Input \(index + 1) — \($0)" } ?? "Input \(index + 1)"
+                )
+            }
+        } else {
+            inputChannelChoices = []
+        }
+        outputPairChoices = ChannelMapping.outputPairs(channelCount: outputDevice?.outputChannels ?? 0)
+    }
 
     var availableSampleRates: [Double] {
         let common: Set<Double> = {
@@ -152,7 +218,8 @@ final class TransportController {
         guard let inputUID = inputDeviceUID, let outputUID = outputDeviceUID else { return nil }
         return Database.shared.calibration(
             inputUID: inputUID, outputUID: outputUID,
-            sampleRate: sampleRate, bufferFrames: bufferFrames
+            sampleRate: sampleRate, bufferFrames: bufferFrames,
+            inputChannel: inputChannel, outputPair: outputPair
         )
     }
 
@@ -197,7 +264,7 @@ final class TransportController {
             try engine.configure(DuplexEngine.EngineConfig(
                 inputDevice: input, outputDevice: output,
                 sampleRate: sampleRate, bufferFrames: bufferFrames,
-                inputChannel: inputChannel
+                inputChannel: inputChannel, outputPair: outputPair
             ))
             refreshLatencyInfo()
 
@@ -205,6 +272,9 @@ final class TransportController {
             currentGrid = grid
             let model = latencyModel
             latencySource = model.usesCalibration ? "calibrated" : "reported"
+            sessionSound = clickSound
+            sessionClickGain = Float(clickGain)
+            sessionCompSamples = model.netCompensationSamples(sampleRate: sampleRate)
 
             var recordingURL: URL?
             if recordAudio {
@@ -306,14 +376,57 @@ final class TransportController {
             }
             Database.shared.save(session: record, hits: hitRows)
             finishedSession = record
-            lastSession = record
             lastSessionHits = result.hits
+            if let wavURL = result.recordingURL {
+                // The row points at the WAV (truthful: that file exists) until
+                // the background encode swaps in the .m4a pair. `lastSession`
+                // flips only then, so the waveform view never latches onto the
+                // WAV that is about to be deleted.
+                beginEncode(record: record, wavURL: wavURL, grid: grid)
+            } else {
+                lastSession = record
+            }
         } else if let url = result.recordingURL {
             try? FileManager.default.removeItem(at: url)
         }
         sessionStart = nil
         // Resume standalone monitoring if the user keeps it enabled.
         updateIdleMonitoring()
+    }
+
+    private func beginEncode(record: SessionRecord, wavURL: URL, grid: ClickGrid) {
+        isEncodingTake = true
+        activeEncodeTakeID = record.id
+        let base = wavURL.deletingPathExtension()
+        let inputURL = base.appendingPathExtension("m4a")
+        let mixURL = base.appendingPathExtension("mix").appendingPathExtension("m4a")
+        let (sound, gain, comp) = (sessionSound, sessionClickGain, sessionCompSamples)
+        Task.detached(priority: .utility) {
+            let outcome = Result {
+                try SessionAudioCodec.encodeSession(
+                    sourceWAV: wavURL, inputDestination: inputURL, mixDestination: mixURL,
+                    grid: grid, sound: sound, clickGain: gain, clickOffsetSamples: comp
+                )
+            }
+            await MainActor.run { [weak self] in
+                var updated = record
+                if case .success(let encoded) = outcome {
+                    try? FileManager.default.removeItem(at: wavURL)
+                    updated.audioPath = encoded.inputURL.path
+                    updated.clickMixPath = encoded.mixURL.path
+                    Database.shared.updateSessionAudio(
+                        id: record.id,
+                        audioPath: updated.audioPath, clickMixPath: updated.clickMixPath
+                    )
+                }
+                // On failure the WAV stays and the row already points at it.
+                guard let self, self.activeEncodeTakeID == record.id else { return }
+                self.isEncodingTake = false
+                self.activeEncodeTakeID = nil
+                self.lastSession = updated
+                if self.finishedSession?.id == record.id { self.finishedSession = updated }
+            }
+        }
     }
 
     // MARK: - Idle (metronome-stopped) monitoring
@@ -333,7 +446,7 @@ final class TransportController {
             try engine.configure(DuplexEngine.EngineConfig(
                 inputDevice: input, outputDevice: output,
                 sampleRate: sampleRate, bufferFrames: bufferFrames,
-                inputChannel: inputChannel
+                inputChannel: inputChannel, outputPair: outputPair
             ))
             // Any grid works: the click is muted and capture is off.
             let grid = ClickGrid(
@@ -380,11 +493,13 @@ final class TransportController {
         let config = DuplexEngine.EngineConfig(
             inputDevice: input, outputDevice: output,
             sampleRate: sampleRate, bufferFrames: bufferFrames,
-            inputChannel: inputChannel
+            inputChannel: inputChannel, outputPair: outputPair
         )
         let inputUID = inputDeviceUID ?? ""
         let outputUID = outputDeviceUID ?? ""
         let buffer = bufferFrames
+        let channel = inputChannel
+        let pair = outputPair
 
         Task.detached { [weak self] in
             let outcome: Result<CalibrationResult, Error>
@@ -403,7 +518,8 @@ final class TransportController {
                 case .success(let result):
                     Database.shared.saveCalibration(
                         inputUID: inputUID, outputUID: outputUID,
-                        bufferFrames: buffer, result: result
+                        bufferFrames: buffer, inputChannel: channel, outputPair: pair,
+                        result: result
                     )
                     self.calibration = result
                     self.calibrationMessage = String(

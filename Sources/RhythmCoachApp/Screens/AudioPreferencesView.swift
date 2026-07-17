@@ -16,6 +16,14 @@ struct AudioPreferencesView: View {
                             .tag(AudioDeviceID?.some(device.id))
                     }
                 }
+                if transport.inputDevice != nil {
+                    Picker("Input channel", selection: $transport.inputChannel) {
+                        ForEach(transport.inputChannelChoices) { choice in
+                            Text(choice.label).tag(choice.index)
+                        }
+                    }
+                    .disabled(transport.inputChannelChoices.count <= 1)
+                }
                 Picker("Output", selection: $transport.outputDeviceID) {
                     Text("None").tag(AudioDeviceID?.none)
                     ForEach(transport.devices.filter(\.hasOutput)) { device in
@@ -23,12 +31,13 @@ struct AudioPreferencesView: View {
                             .tag(AudioDeviceID?.some(device.id))
                     }
                 }
-                if let input = transport.inputDevice, input.inputChannels > 1 {
-                    Stepper(
-                        "Input channel: \(transport.inputChannel + 1)",
-                        value: $transport.inputChannel,
-                        in: 0...(input.inputChannels - 1)
-                    )
+                if transport.outputDevice != nil {
+                    Picker("Output channels", selection: $transport.outputPair) {
+                        ForEach(transport.outputPairChoices) { pair in
+                            Text(pair.label).tag(pair.index)
+                        }
+                    }
+                    .disabled(transport.outputPairChoices.count <= 1)
                 }
                 if transport.inputDeviceID != transport.outputDeviceID {
                     Label(
@@ -84,7 +93,7 @@ struct AudioPreferencesView: View {
                     }
                 } else {
                     LabeledContent("Stored measurement") {
-                        Text("none for this device/rate/buffer combination")
+                        Text("none for this device/channel/rate/buffer combination")
                             .foregroundStyle(.orange)
                     }
                 }

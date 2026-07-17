@@ -19,6 +19,10 @@ struct PracticeView: View {
                 .frame(minHeight: 120)
                 HistogramView(histogram: transport.snapshot.histogram, toleranceMs: transport.toleranceMs)
                     .frame(height: 110)
+                if transport.isEncodingTake {
+                    ProgressView("Preparing take audio…")
+                        .controlSize(.small)
+                }
                 if !transport.isRunning,
                    let session = transport.lastSession,
                    let path = session.audioPath {
@@ -27,6 +31,7 @@ struct PracticeView: View {
                             .font(.headline)
                         WaveformSessionView(
                             audioURL: URL(fileURLWithPath: path),
+                            mixURL: session.clickMixPath.map { URL(fileURLWithPath: $0) },
                             grid: WaveformGridParams(record: session),
                             hits: WaveformHitMarker.markers(hits: transport.lastSessionHits, record: session)
                         )

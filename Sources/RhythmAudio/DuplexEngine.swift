@@ -13,14 +13,20 @@ public final class DuplexEngine {
         public var sampleRate: Double
         public var bufferFrames: Int
         public var inputChannel: Int
+        /// Stereo-pair index on the output device (0 = channels 1/2); the
+        /// click + monitor signal goes only to that pair, other channels
+        /// are muted.
+        public var outputPair: Int
 
         public init(inputDevice: AudioDeviceID, outputDevice: AudioDeviceID,
-                    sampleRate: Double, bufferFrames: Int, inputChannel: Int = 0) {
+                    sampleRate: Double, bufferFrames: Int, inputChannel: Int = 0,
+                    outputPair: Int = 0) {
             self.inputDevice = inputDevice
             self.outputDevice = outputDevice
             self.sampleRate = sampleRate
             self.bufferFrames = bufferFrames
             self.inputChannel = inputChannel
+            self.outputPair = outputPair
         }
     }
 
@@ -71,7 +77,25 @@ public final class DuplexEngine {
         guard let config else { throw HALError.unsupported("engine not configured") }
         stop()
 
-        let ctx = RealtimeContext(grid: grid, sound: sound, inputChannel: config.inputChannel)
+        // Resolve the device-relative channel selections to absolute ABL
+        // indexes. The aggregate lists the output sub-device first, so its
+        // output streams lead the output ABL (pair channels are already
+        // absolute), while any input streams it has precede the input
+        // device's streams in the input ABL.
+        let outCount = HAL.channelCount(config.outputDevice, scope: kAudioObjectPropertyScopeOutput)
+        let inCount = HAL.channelCount(config.inputDevice, scope: kAudioObjectPropertyScopeInput)
+        let pairs = ChannelMapping.outputPairs(channelCount: outCount)
+        let outputChannels = pairs.isEmpty
+            ? 0...0
+            : pairs[ChannelMapping.clampedPairIndex(config.outputPair, channelCount: outCount)].channels
+        let inputOffset = aggregateID != 0
+            ? HAL.channelCount(config.outputDevice, scope: kAudioObjectPropertyScopeInput)
+            : 0
+        let inputChannel = inputOffset
+            + ChannelMapping.clampedInputChannel(config.inputChannel, channelCount: inCount)
+
+        let ctx = RealtimeContext(grid: grid, sound: sound, inputChannel: inputChannel,
+                                  outputChannels: outputChannels)
         ctx.setClickGain(clickGain)
         ctx.setMonitorGain(monitorGain)
         self.context = ctx
