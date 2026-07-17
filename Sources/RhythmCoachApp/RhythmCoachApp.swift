@@ -32,7 +32,7 @@ enum Screen: String, CaseIterable, Identifiable {
 
 struct MainView: View {
     @Environment(TransportController.self) private var transport
-    @State private var screen: Screen = .practice
+    @AppStorage("ui.screen") private var screen: Screen = .practice
 
     var body: some View {
         NavigationSplitView {

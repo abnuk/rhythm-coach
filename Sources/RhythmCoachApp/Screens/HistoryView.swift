@@ -6,7 +6,7 @@ struct HistoryView: View {
     @State private var sessions: [SessionRecord] = []
     @State private var displayNames: [SessionRecord.ID: String] = [:]
     @State private var selection: SessionRecord.ID?
-    @State private var trendMode: TrendMode = .percent
+    @AppStorage("ui.historyTrendMode") private var trendMode: TrendMode = .percent
     @State private var renameTargetID: SessionRecord.ID?
     @State private var renameText = ""
 

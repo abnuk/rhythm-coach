@@ -549,8 +549,10 @@ extension SessionRecord {
         let sub = Subdivision(rawValue: subdivision)?.displayName ?? subdivision
         var parts = ["\(Int(bpm)) BPM \(sub)"]
         switch ClickDensity(rawValue: clickDensity) {
-        case .beatsOnly: parts.append("click on beats")
-        case .downbeatsOnly: parts.append("click on bars")
+        case .beatsOnly:
+            parts.append(beatsPerBar.map { "click on beats (\($0)/bar)" } ?? "click on beats")
+        case .downbeatsOnly:
+            parts.append(beatsPerBar.map { "click on bars (\($0) beats)" } ?? "click on bars")
         default: break
         }
         if let gap = gapPattern { parts.append("gap \(gap)") }
