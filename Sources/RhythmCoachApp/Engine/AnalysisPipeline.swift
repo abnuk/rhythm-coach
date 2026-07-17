@@ -25,7 +25,8 @@ final class AnalysisPipeline: @unchecked Sendable {
         self.context = context
         self.detector = OnsetDetector(sampleRate: grid.sampleRate)
         self.scorer = TimingScorer(grid: grid, latencyCompensationSamples: latencyCompensationSamples)
-        self.stats = StatsAccumulator(toleranceMs: toleranceMs, sampleRate: grid.sampleRate)
+        self.stats = StatsAccumulator(toleranceMs: toleranceMs, sampleRate: grid.sampleRate,
+                                      slotIOIMs: grid.samplesPerSlot / grid.sampleRate * 1000)
         self.writer = recordingURL.flatMap { try? StreamingWaveWriter(url: $0, sampleRate: grid.sampleRate) }
     }
 

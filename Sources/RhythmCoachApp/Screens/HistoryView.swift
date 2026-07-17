@@ -5,13 +5,20 @@ import SwiftUI
 struct HistoryView: View {
     @State private var sessions: [SessionRecord] = []
     @State private var selection: SessionRecord.ID?
+    @State private var trendMode: TrendMode = .percent
+
+    private enum TrendMode: String, CaseIterable, Identifiable {
+        case percent = "% of grid"
+        case ms = "ms"
+        var id: String { rawValue }
+    }
 
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
                 if sessions.count >= 2 {
                     trendChart
-                        .frame(height: 180)
+                        .frame(height: 210)
                         .padding()
                 }
                 List(sessions, selection: $selection) { session in
@@ -20,9 +27,12 @@ struct HistoryView: View {
                             Text(session.startedAt, format: .dateTime.day().month().hour().minute())
                                 .font(.headline)
                             Spacer()
+                            if let rating = session.rating {
+                                TierBadge(tier: rating.overall)
+                            }
                             Text(String(format: "%+.1f / %.1f ms", session.meanMs, session.sdMs))
                                 .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(session.sdMs <= 10 ? .green : .secondary)
+                                .foregroundStyle(session.rating?.overall.color ?? .secondary)
                         }
                         Text(session.subtitle)
                             .font(.caption)
@@ -59,42 +69,63 @@ struct HistoryView: View {
         sessions = Database.shared.sessions()
     }
 
+    /// Sessions the current trend mode can plot: % mode needs a known grid.
+    private var trendSessions: [SessionRecord] {
+        trendMode == .percent ? sessions.filter { $0.slotIOIMs > 0 } : sessions
+    }
+
+    /// SD/mean scaled for the current mode (ms, or % of the slot interval
+    /// so sessions at different tempo/subdivision are comparable).
+    private func trendValue(_ ms: Double, for session: SessionRecord) -> Double {
+        trendMode == .percent ? ms / session.slotIOIMs * 100 : ms
+    }
+
     private var trendChart: some View {
-        Chart {
-            ForEach(sessions) { session in
-                LineMark(
-                    x: .value("Date", session.startedAt),
-                    y: .value("SD", session.sdMs),
-                    series: .value("Metric", "SD (stability)")
-                )
-                .foregroundStyle(.blue)
-                PointMark(
-                    x: .value("Date", session.startedAt),
-                    y: .value("SD", session.sdMs)
-                )
-                .foregroundStyle(.blue)
-                .symbolSize(30)
-                LineMark(
-                    x: .value("Date", session.startedAt),
-                    y: .value("Mean", session.meanMs),
-                    series: .value("Metric", "Mean (bias)")
-                )
-                .foregroundStyle(.orange)
-                PointMark(
-                    x: .value("Date", session.startedAt),
-                    y: .value("Mean", session.meanMs)
-                )
-                .foregroundStyle(.orange)
-                .symbolSize(30)
+        VStack(spacing: 6) {
+            Picker("Trend units", selection: $trendMode) {
+                ForEach(TrendMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
             }
-            RuleMark(y: .value("Zero", 0))
-                .foregroundStyle(.secondary.opacity(0.4))
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 220)
+            Chart {
+                ForEach(trendSessions) { session in
+                    LineMark(
+                        x: .value("Date", session.startedAt),
+                        y: .value("SD", trendValue(session.sdMs, for: session)),
+                        series: .value("Metric", "SD (stability)")
+                    )
+                    .foregroundStyle(.blue)
+                    PointMark(
+                        x: .value("Date", session.startedAt),
+                        y: .value("SD", trendValue(session.sdMs, for: session))
+                    )
+                    .foregroundStyle((session.rating?.overall ?? .fair).color)
+                    .symbolSize(40)
+                    LineMark(
+                        x: .value("Date", session.startedAt),
+                        y: .value("Mean", trendValue(session.meanMs, for: session)),
+                        series: .value("Metric", "Mean (bias)")
+                    )
+                    .foregroundStyle(.orange)
+                    PointMark(
+                        x: .value("Date", session.startedAt),
+                        y: .value("Mean", trendValue(session.meanMs, for: session))
+                    )
+                    .foregroundStyle(.orange)
+                    .symbolSize(30)
+                }
+                RuleMark(y: .value("Zero", 0))
+                    .foregroundStyle(.secondary.opacity(0.4))
+            }
+            .chartYAxisLabel(trendMode == .percent ? "% of grid IOI" : "ms")
+            .chartForegroundStyleScale([
+                "SD (stability)": Color.blue,
+                "Mean (bias)": Color.orange,
+            ])
         }
-        .chartYAxisLabel("ms")
-        .chartForegroundStyleScale([
-            "SD (stability)": Color.blue,
-            "Mean (bias)": Color.orange,
-        ])
     }
 }
 
@@ -121,12 +152,12 @@ struct SessionDetailView: View {
                 HStack(spacing: 12) {
                     StatBox(title: "MEAN (bias)",
                             value: String(format: "%+.1f ms", session.meanMs),
-                            detail: session.meanMs > 0 ? "behind the beat" : "ahead of the beat",
-                            color: .primary)
+                            detail: meanDetail,
+                            color: session.rating?.accuracy.color ?? .primary)
                     StatBox(title: "SD (stability)",
                             value: String(format: "%.1f ms", session.sdMs),
-                            detail: String(format: "%.1f%% of beat", session.sdMs / (60000 / session.bpm) * 100),
-                            color: session.sdMs <= 10 ? .green : .primary)
+                            detail: sdDetail,
+                            color: session.rating?.stability.color ?? .primary)
                     StatBox(title: "IN TOLERANCE",
                             value: String(format: "%.0f%%", session.pctInTolerance),
                             detail: "\(session.hitCount) hits · \(session.missedCount) missed · \(session.extraCount) extra",
@@ -147,6 +178,13 @@ struct SessionDetailView: View {
                         toleranceMs: session.toleranceMs
                     )
                     .frame(height: 180)
+
+                    if !rollingPoints.isEmpty && session.slotIOIMs > 0 {
+                        Text("Stability over time (SD of last \(RollingStats.windowHits) hits)")
+                            .font(.headline)
+                        RollingSDChart(points: rollingPoints, slotIOIMs: session.slotIOIMs)
+                            .frame(height: 160)
+                    }
 
                     Text("Distribution").font(.headline)
                     HistogramView(histogram: histogramFromHits, toleranceMs: session.toleranceMs)
@@ -190,6 +228,28 @@ struct SessionDetailView: View {
         }
         return bins
     }
+
+    private var meanDetail: String {
+        let direction = session.meanMs > 0 ? "behind the beat" : "ahead of the beat"
+        guard let rating = session.rating else { return direction }
+        return "\(rating.accuracy.label) · \(direction)"
+    }
+
+    private var sdDetail: String {
+        guard session.slotIOIMs > 0 else { return "—" }
+        let pct = String(format: "%.1f%% of grid", session.sdMs / session.slotIOIMs * 100)
+        guard let rating = session.rating else { return pct }
+        return "\(rating.stability.label) · \(pct)"
+    }
+
+    private var rollingPoints: [RollingPoint] {
+        guard session.sampleRate > 0 else { return [] }
+        let hitRows = hits.filter { $0.kind == "hit" }.sorted { $0.onsetSample < $1.onsetSample }
+        return RollingStats.windowedSD(
+            timesSec: hitRows.map { $0.onsetSample / session.sampleRate },
+            deviationsMs: hitRows.map(\.deviationMs)
+        )
+    }
 }
 
 struct SessionSummarySheet: View {
@@ -198,20 +258,27 @@ struct SessionSummarySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Session complete")
-                .font(.title.weight(.semibold))
+            HStack(spacing: 10) {
+                Text("Session complete")
+                    .font(.title.weight(.semibold))
+                if let rating = session.rating {
+                    TierBadge(tier: rating.overall)
+                }
+            }
             Text(session.subtitle)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 12) {
                 StatBox(title: "MEAN (bias)",
                         value: String(format: "%+.1f ms", session.meanMs),
-                        detail: session.meanMs > 0 ? "behind the beat" : "ahead of the beat",
-                        color: .primary)
+                        detail: session.rating.map {
+                            "\($0.accuracy.label) · \(session.meanMs > 0 ? "behind the beat" : "ahead of the beat")"
+                        } ?? (session.meanMs > 0 ? "behind the beat" : "ahead of the beat"),
+                        color: session.rating?.accuracy.color ?? .primary)
                 StatBox(title: "SD (stability)",
                         value: String(format: "%.1f ms", session.sdMs),
-                        detail: session.sdMs <= 10 ? "tight!" : "keep working",
-                        color: session.sdMs <= 10 ? .green : .primary)
+                        detail: session.rating?.stability.label ?? "—",
+                        color: session.rating?.stability.color ?? .primary)
                 StatBox(title: "IN TOLERANCE",
                         value: String(format: "%.0f%%", session.pctInTolerance),
                         detail: "\(session.hitCount) hits",
@@ -232,19 +299,30 @@ struct SessionSummarySheet: View {
     }
 
     private var verdict: String {
-        var parts: [String] = []
-        if abs(session.meanMs) <= 5 {
-            parts.append("Bias is excellent (within ±5 ms).")
-        } else if session.meanMs < 0 {
-            parts.append(String(format: "You tend to rush by %.0f ms — the classic anticipation tendency.", -session.meanMs))
-        } else {
-            parts.append(String(format: "You sit %.0f ms behind the click.", session.meanMs))
+        guard let rating = session.rating else {
+            return "Not enough hits to rate this session."
         }
-        if session.sdMs <= 10 {
-            parts.append("Stability is in the pro range (SD ≤ 10 ms).")
-        } else if session.sdMs <= 20 {
-            parts.append("Stability is decent; slow the tempo to tighten further.")
-        } else {
+        var parts: [String] = []
+        switch rating.accuracy {
+        case .pro:
+            parts.append("Bias is excellent — dead on the grid.")
+        case .good:
+            parts.append(String(format: "Bias is good (%+.0f ms).", session.meanMs))
+        case .fair, .poor:
+            if session.meanMs < 0 {
+                parts.append(String(format: "You tend to rush by %.0f ms — the classic anticipation tendency.", -session.meanMs))
+            } else {
+                parts.append(String(format: "You sit %.0f ms behind the click.", session.meanMs))
+            }
+        }
+        switch rating.stability {
+        case .pro:
+            parts.append("Stability is in the pro range.")
+        case .good:
+            parts.append("Solid stability — push the tempo or tighten toward pro.")
+        case .fair:
+            parts.append("Stability is fair; slow the tempo to tighten further.")
+        case .poor:
             parts.append("High variance — drop the BPM and focus on consistency.")
         }
         if abs(session.driftMsPerMin) >= 5 {

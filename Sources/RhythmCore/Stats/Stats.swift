@@ -18,10 +18,22 @@ public struct LiveStatsSnapshot: Sendable, Equatable {
     /// Lag-1 autocorrelation of deviations (error-correction indicator).
     public var lag1: Double = 0
     public var toleranceMs: Double = 15
+    /// Interval of the analysis-grid slot in ms; 0 = unknown grid.
+    public var slotIOIMs: Double = 0
+    /// Sample SD of the most recent `RollingStats.windowHits` deviations;
+    /// nil until `RollingStats.minLiveHits` hits have been scored.
+    public var rollingSdMs: Double? = nil
     /// Histogram of deviations, `Histogram.binCount` bins over ±`Histogram.rangeMs`.
     public var histogram: [Int] = Array(repeating: 0, count: Histogram.binCount)
 
     public init() {}
+}
+
+public extension LiveStatsSnapshot {
+    /// Tempo-normalized whole-session rating; nil below 2 hits or without a grid.
+    var rating: TimingRating? {
+        TimingRating(sdMs: sdMs, meanMs: meanMs, slotIOIMs: slotIOIMs, hitCount: hitCount)
+    }
 }
 
 public enum Histogram {
@@ -45,6 +57,7 @@ public enum Histogram {
 public final class StatsAccumulator {
     public let toleranceMs: Double
     private let sampleRate: Double
+    private let slotIOIMs: Double
 
     private var count = 0
     private var mean = 0.0
@@ -60,9 +73,10 @@ public final class StatsAccumulator {
     // Least squares of deviation (ms) vs onset time (minutes).
     private var sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXX = 0.0
 
-    public init(toleranceMs: Double, sampleRate: Double) {
+    public init(toleranceMs: Double, sampleRate: Double, slotIOIMs: Double = 0) {
         self.toleranceMs = toleranceMs
         self.sampleRate = sampleRate
+        self.slotIOIMs = slotIOIMs
         deviations.reserveCapacity(4096)
     }
 
@@ -97,6 +111,7 @@ public final class StatsAccumulator {
         s.missedCount = missed
         s.extraCount = extra
         s.toleranceMs = toleranceMs
+        s.slotIOIMs = slotIOIMs
         s.histogram = histogram
         guard count > 0 else { return s }
         s.meanMs = mean
@@ -104,6 +119,15 @@ public final class StatsAccumulator {
         s.minMs = minMs
         s.maxMs = maxMs
         s.pctInTolerance = Double(inTolerance) / Double(count) * 100
+        if count >= RollingStats.minLiveHits {
+            let recent = deviations.suffix(RollingStats.windowHits)
+            var rMean = 0.0
+            for d in recent { rMean += d }
+            rMean /= Double(recent.count)
+            var rM2 = 0.0
+            for d in recent { rM2 += (d - rMean) * (d - rMean) }
+            s.rollingSdMs = (rM2 / Double(recent.count - 1)).squareRoot()
+        }
 
         if count > 2 {
             let n = Double(count)

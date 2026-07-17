@@ -191,6 +191,20 @@ import RhythmCore
         expect(!missedSlots.contains(0), "count-in slots never reported missed")
     }
 
+    /// deviationPctIOI is % of the played slot interval, not the beat.
+    func slotRelativePct() {
+        let spec = ClickGridSpec(bpm: 120, subdivision: .eighth, countInBars: 1)
+        let grid = ClickGrid(spec: spec, sampleRate: sampleRate)
+        let scorer = TimingScorer(grid: grid, latencyCompensationSamples: 0)
+        let events = scorer.onOnset(Onset(sampleTime: grid.sampleTime(ofSlot: 9) + 0.010 * sampleRate, strength: 1))
+        guard case .hit(let hit)? = events.first else {
+            recordIssue("expected a hit, got \(events)")
+            return
+        }
+        // 10 ms on a 250 ms eighth slot = 4%.
+        expect(abs(hit.deviationPctIOI - 4) < 1e-9)
+    }
+
     /// With expectEverySlot off, empty slots produce no missed events but
     /// hits are still scored normally.
     func restsAllowed() {
@@ -277,6 +291,27 @@ import RhythmCore
         let s = acc.snapshot()
         expect(s.hitCount == 1 && s.missedCount == 1 && s.extraCount == 1)
         expect(abs(s.meanMs - 10) < 1e-9)
+    }
+
+    /// The snapshot's rolling SD tracks the last window, not the session.
+    func rollingSnapshot() {
+        let acc = StatsAccumulator(toleranceMs: 15, sampleRate: sampleRate, slotIOIMs: 250)
+        // Below the live minimum: no rolling SD yet, slot IOI stamped.
+        for i in 0..<4 { acc.add(hit(deviationMs: i % 2 == 0 ? 40 : -40, atSecond: Double(i))) }
+        expect(acc.snapshot().rollingSdMs == nil)
+        expect(acc.snapshot().slotIOIMs == 250)
+        // 10 wild hits then 16 tight ones: the rolling window is tight while
+        // the whole-session SD stays inflated by the wild start.
+        for i in 4..<10 { acc.add(hit(deviationMs: i % 2 == 0 ? 40 : -40, atSecond: Double(i))) }
+        for i in 10..<26 { acc.add(hit(deviationMs: i % 2 == 0 ? 1 : -1, atSecond: Double(i))) }
+        let s = acc.snapshot()
+        guard let rolling = s.rollingSdMs else {
+            recordIssue("rolling SD expected after 26 hits")
+            return
+        }
+        expect(rolling < 2)
+        expect(rolling < s.sdMs)
+        expect(s.rating?.stability == .poor, "session rating uses whole-session SD")
     }
 }
 

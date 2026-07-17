@@ -215,7 +215,8 @@ enum RCCLI {
 
         let detector = OnsetDetector(sampleRate: sampleRate)
         let scorer = TimingScorer(grid: grid, latencyCompensationSamples: latencySamples)
-        let stats = StatsAccumulator(toleranceMs: 15, sampleRate: sampleRate)
+        let stats = StatsAccumulator(toleranceMs: 15, sampleRate: sampleRate,
+                                     slotIOIMs: grid.samplesPerSlot / sampleRate * 1000)
 
         let onsets = detector.detect(in: samples)
         var lastOnset = 0.0
@@ -226,19 +227,23 @@ enum RCCLI {
         for event in scorer.advance(to: lastOnset) { stats.add(event) }
 
         let s = stats.snapshot()
-        let beatMs = grid.samplesPerBeat / sampleRate * 1000
+        let slotMs = s.slotIOIMs
+        let ratingLine = s.rating.map {
+            "rating:       stability \($0.stability.label) · accuracy \($0.accuracy.label) · overall \($0.overall.label)  (slot IOI \(String(format: "%.0f", slotMs)) ms)"
+        } ?? "rating:       n/a"
         print("""
         \(path): \(String(format: "%.1f", Double(samples.count) / sampleRate)) s @ \(Int(sampleRate)) Hz
         grid: \(grid.spec.bpm) BPM \(grid.spec.subdivision.displayName), latency comp \(latencySamples) samples
         onsets detected: \(onsets.count)
         hits: \(s.hitCount)  missed: \(s.missedCount)  extra: \(s.extraCount)
 
-        mean (bias):  \(String(format: "%+.2f ms  (%+.1f%% of beat)", s.meanMs, s.meanMs / beatMs * 100))
-        sd (stability): \(String(format: "%.2f ms  (%.1f%% of beat)", s.sdMs, s.sdMs / beatMs * 100))
+        mean (bias):  \(String(format: "%+.2f ms  (%+.1f%% of grid IOI)", s.meanMs, s.meanMs / slotMs * 100))
+        sd (stability): \(String(format: "%.2f ms  (%.1f%% of grid IOI)", s.sdMs, s.sdMs / slotMs * 100))
         min/max:      \(String(format: "%+.2f / %+.2f ms", s.minMs, s.maxMs))
         in ±15 ms:    \(String(format: "%.0f%%", s.pctInTolerance))
         drift:        \(String(format: "%+.2f ms/min", s.driftMsPerMin))
         lag-1 autocorr: \(String(format: "%+.2f", s.lag1))
+        \(ratingLine)
         """)
     }
 

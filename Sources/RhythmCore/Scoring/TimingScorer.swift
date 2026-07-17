@@ -6,6 +6,7 @@ public struct Hit: Sendable, Equatable {
     public var gridSample: Double     // reference time incl. target offset
     public var onsetSample: Double    // latency-compensated onset time
     public var deviationMs: Double    // + late, - early
+    /// Deviation as % of the analysis-grid slot interval (the played IOI).
     public var deviationPctIOI: Double
     public var strength: Float
 
@@ -72,13 +73,13 @@ public final class TimingScorer {
         }
 
         let deviationMs = deviationSamples / grid.sampleRate * 1000
-        let beatMs = grid.samplesPerBeat / grid.sampleRate * 1000
+        let slotMs = grid.samplesPerSlot / grid.sampleRate * 1000
         let hit = Hit(
             slotIndex: slot,
             gridSample: reference,
             onsetSample: adjusted,
             deviationMs: deviationMs,
-            deviationPctIOI: deviationMs / beatMs * 100,
+            deviationPctIOI: deviationMs / slotMs * 100,
             strength: onset.strength
         )
         bestHitPerSlot[slot] = hit

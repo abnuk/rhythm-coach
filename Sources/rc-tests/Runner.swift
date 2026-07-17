@@ -32,6 +32,7 @@ struct Runner {
         runTest("slot contention") { scorer.slotContention() }
         runTest("extra and missed") { scorer.extraAndMissed() }
         runTest("rests allowed (expectEverySlot off)") { scorer.restsAllowed() }
+        runTest("pct relative to slot, not beat") { scorer.slotRelativePct() }
 
         suite("Stats")
         let stats = StatsTests()
@@ -40,6 +41,22 @@ struct Runner {
         runTest("lag-1 alternating") { stats.lag1Alternating() }
         runTest("histogram bins") { stats.histogramBins() }
         runTest("missed/extra counting") { stats.missedExtra() }
+        runTest("rolling SD in snapshot") { stats.rollingSnapshot() }
+
+        suite("TimingRating")
+        let rating = TimingRatingTests()
+        runTest("floor regime boundaries") { rating.floorRegime() }
+        runTest("percent regime boundaries") { rating.percentRegime() }
+        runTest("floor/percent crossover") { rating.crossover() }
+        runTest("sign and nil cases") { rating.signAndNil() }
+        runTest("overall combination rule") { rating.overallRule() }
+
+        suite("RollingStats")
+        let rolling = RollingStatsTests()
+        runTest("fewer than window → empty") { rolling.tooFew() }
+        runTest("constant input") { rolling.constantInput() }
+        runTest("closed-form single window") { rolling.closedFormWindow() }
+        runTest("tight then loose rises") { rolling.tightThenLoose() }
 
         suite("LatencyModel")
         runTest("compensation priority") { LatencyModelTests().compensationPriority() }

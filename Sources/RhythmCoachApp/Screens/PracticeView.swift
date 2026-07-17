@@ -194,18 +194,29 @@ struct PracticeView: View {
 
     private var statsRow: some View {
         let stats = transport.snapshot
+        let canRate = stats.slotIOIMs > 0 && stats.hitCount >= 2
+        // Live tiers follow the rolling window (the last few bars), so the
+        // label reflects what you are playing now, not the session average.
+        let stabilityTier: TimingTier? = canRate
+            ? TierThresholds.stability.tier(forAbsMs: stats.rollingSdMs ?? stats.sdMs,
+                                            slotIOIMs: stats.slotIOIMs)
+            : nil
+        let accuracyTier: TimingTier? = canRate
+            ? TierThresholds.accuracy.tier(forAbsMs: abs(stats.meanMs), slotIOIMs: stats.slotIOIMs)
+            : nil
         return HStack(spacing: 12) {
             StatBox(
                 title: "MEAN (bias)",
                 value: String(format: "%+.1f ms", stats.meanMs),
-                detail: biasLabel(stats.meanMs),
-                color: abs(stats.meanMs) <= transport.toleranceMs ? .green : .orange
+                detail: accuracyTier.map { "\($0.label) · \(biasLabel(stats.meanMs))" }
+                    ?? biasLabel(stats.meanMs),
+                color: accuracyTier?.color ?? .primary
             )
             StatBox(
                 title: "SD (stability)",
                 value: String(format: "%.1f ms", stats.sdMs),
-                detail: stabilityLabel(stats.sdMs),
-                color: stats.sdMs <= 10 ? .green : (stats.sdMs <= 20 ? .yellow : .orange)
+                detail: stabilityDetail(stats, tier: stabilityTier),
+                color: stabilityTier?.color ?? .primary
             )
             StatBox(
                 title: "IN ±\(Int(transport.toleranceMs)) MS",
@@ -233,13 +244,11 @@ struct PracticeView: View {
         return mean > 0 ? "behind the beat" : "ahead of the beat"
     }
 
-    private func stabilityLabel(_ sd: Double) -> String {
-        switch sd {
-        case ..<5: "rock solid"
-        case ..<10: "tight"
-        case ..<20: "loose"
-        default: "unstable"
-        }
+    private func stabilityDetail(_ stats: LiveStatsSnapshot, tier: TimingTier?) -> String {
+        guard let tier else { return "—" }
+        guard let rolling = stats.rollingSdMs else { return tier.label }
+        let windowSize = min(stats.hitCount, RollingStats.windowHits)
+        return String(format: "%@ · last %d: %.1f ms", tier.label, windowSize, rolling)
     }
 
     private func driftLabel(_ drift: Double) -> String {
