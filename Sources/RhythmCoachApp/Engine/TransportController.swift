@@ -40,11 +40,19 @@ final class TransportController {
             restartIdleMonitoringIfActive()
         }
     }
-    var sampleRate: Double = 48000 {
-        didSet { refreshLatencyInfo(); restartIdleMonitoringIfActive() }
+    var sampleRate: Double = Persisted.double("settings.sampleRate", 48000) {
+        didSet {
+            UserDefaults.standard.set(sampleRate, forKey: "settings.sampleRate")
+            refreshLatencyInfo()
+            restartIdleMonitoringIfActive()
+        }
     }
-    var bufferFrames: Int = 128 {
-        didSet { refreshLatencyInfo(); restartIdleMonitoringIfActive() }
+    var bufferFrames: Int = Persisted.int("settings.bufferFrames", 128) {
+        didSet {
+            UserDefaults.standard.set(bufferFrames, forKey: "settings.bufferFrames")
+            refreshLatencyInfo()
+            restartIdleMonitoringIfActive()
+        }
     }
     var inputChannel: Int = 0 {
         didSet {
@@ -67,37 +75,82 @@ final class TransportController {
     }
 
     // MARK: Click configuration
-    var bpm: Double = 90
-    var subdivision: Subdivision = .eighth
-    var beatsPerBar: Int = 4
-    var accentDownbeat = true
+    // Every training knob persists as the next launch's default: the property
+    // initializer restores, didSet writes back (@AppStorage is unusable on an
+    // @Observable class).
+    var bpm: Double = Persisted.double("settings.bpm", 90, in: 30...300) {
+        didSet { UserDefaults.standard.set(bpm, forKey: "settings.bpm") }
+    }
+    var subdivision: Subdivision = Persisted.rawValue("settings.subdivision", Subdivision.eighth) {
+        didSet { UserDefaults.standard.set(subdivision.rawValue, forKey: "settings.subdivision") }
+    }
+    var beatsPerBar: Int = Persisted.int("settings.beatsPerBar", 4, in: 2...12) {
+        didSet { UserDefaults.standard.set(beatsPerBar, forKey: "settings.beatsPerBar") }
+    }
+    var accentDownbeat = Persisted.bool("settings.accentDownbeat", true) {
+        didSet { UserDefaults.standard.set(accentDownbeat, forKey: "settings.accentDownbeat") }
+    }
     /// What you hear; analysis always tracks every slot of `subdivision`.
-    var clickDensity: ClickDensity = .everySlot
+    var clickDensity: ClickDensity = Persisted.rawValue("settings.clickDensity", ClickDensity.everySlot) {
+        didSet { UserDefaults.standard.set(clickDensity.rawValue, forKey: "settings.clickDensity") }
+    }
     /// Off = playing patterns with rests; empty slots are not "missed".
-    var expectEverySlot = true
-    var gapClickEnabled = false
-    var gapBarsOn = 2
-    var gapBarsOff = 2
-    var countInBars = 1
-    var targetOffsetMs: Double = 0
-    var clickSound: ClickSound = .woodblock
-    var clickGain: Double = 0.7 {
-        didSet { engine.context?.setClickGain(Float(clickGain)) }
+    var expectEverySlot = Persisted.bool("settings.expectEverySlot", true) {
+        didSet { UserDefaults.standard.set(expectEverySlot, forKey: "settings.expectEverySlot") }
+    }
+    var gapClickEnabled = Persisted.bool("settings.gapClickEnabled", false) {
+        didSet { UserDefaults.standard.set(gapClickEnabled, forKey: "settings.gapClickEnabled") }
+    }
+    var gapBarsOn = Persisted.int("settings.gapBarsOn", 2, in: 1...8) {
+        didSet { UserDefaults.standard.set(gapBarsOn, forKey: "settings.gapBarsOn") }
+    }
+    var gapBarsOff = Persisted.int("settings.gapBarsOff", 2, in: 1...8) {
+        didSet { UserDefaults.standard.set(gapBarsOff, forKey: "settings.gapBarsOff") }
+    }
+    var countInBars = Persisted.int("settings.countInBars", 1, in: 0...4) {
+        didSet { UserDefaults.standard.set(countInBars, forKey: "settings.countInBars") }
+    }
+    var targetOffsetMs: Double = Persisted.double("settings.targetOffsetMs", 0, in: -40...40) {
+        didSet { UserDefaults.standard.set(targetOffsetMs, forKey: "settings.targetOffsetMs") }
+    }
+    var clickSound: ClickSound = Persisted.rawValue("settings.clickSound", ClickSound.woodblock) {
+        didSet { UserDefaults.standard.set(clickSound.rawValue, forKey: "settings.clickSound") }
+    }
+    var clickGain: Double = Persisted.double("settings.clickGain", 0.7, in: 0...1) {
+        didSet {
+            UserDefaults.standard.set(clickGain, forKey: "settings.clickGain")
+            engine.context?.setClickGain(Float(clickGain))
+        }
     }
     /// Input monitoring works both during a session and standalone: with the
     /// metronome stopped, the duplex engine keeps running in monitor-only
     /// mode (click muted, capture disabled).
-    var monitorEnabled = false {
+    var monitorEnabled = Persisted.bool("settings.monitorEnabled", false) {
         didSet {
+            UserDefaults.standard.set(monitorEnabled, forKey: "settings.monitorEnabled")
             engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0)
             updateIdleMonitoring()
         }
     }
-    var monitorGain: Double = 0.8 {
-        didSet { engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0) }
+    var monitorGain: Double = Persisted.double("settings.monitorGain", 0.8, in: 0...1.5) {
+        didSet {
+            UserDefaults.standard.set(monitorGain, forKey: "settings.monitorGain")
+            engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0)
+        }
     }
-    var toleranceMs: Double = 15
-    var recordAudio = true
+    /// Snapped to the tolerance picker's tag values — an arbitrary restored
+    /// value would leave the picker with no selection.
+    var toleranceMs: Double = Persisted.snapped("settings.toleranceMs", 15, to: [5, 10, 15, 20, 30]) {
+        didSet { UserDefaults.standard.set(toleranceMs, forKey: "settings.toleranceMs") }
+    }
+    var recordAudio = Persisted.bool("settings.recordAudio", true) {
+        didSet { UserDefaults.standard.set(recordAudio, forKey: "settings.recordAudio") }
+    }
+    /// Custom session name; empty = automatic date/tempo/grid naming
+    /// (the session is then stored unnamed and history shows its metadata).
+    var sessionName: String = UserDefaults.standard.string(forKey: "settings.sessionName") ?? "" {
+        didSet { UserDefaults.standard.set(sessionName, forKey: "settings.sessionName") }
+    }
 
     // MARK: Latency
     var reportedInput = ReportedLatency()
@@ -141,6 +194,22 @@ final class TransportController {
 
     init() {
         refreshDevices()
+        // didSet does not run for restored initial values: if monitoring was
+        // left on last time, start it explicitly.
+        updateIdleMonitoring()
+    }
+
+    /// Default name for the next take when no custom name is set, mirroring
+    /// the label history rows fall back to.
+    var autoSessionName: String {
+        var parts = ["\(Int(bpm)) BPM \(subdivision.displayName)"]
+        switch clickDensity {
+        case .beatsOnly: parts.append("click on beats")
+        case .downbeatsOnly: parts.append("click on bars")
+        case .everySlot: break
+        }
+        let date = Date().formatted(.dateTime.day().month().hour().minute())
+        return "\(date) · \(parts.joined(separator: " · "))"
     }
 
     // MARK: - Devices
@@ -365,7 +434,12 @@ final class TransportController {
             driftMsPerMin: final.driftMsPerMin,
             lag1: final.lag1,
             beatsPerBar: grid.spec.beatsPerBar,
-            countInBars: grid.spec.countInBars
+            countInBars: grid.spec.countInBars,
+            name: {
+                let trimmed = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }(),
+            expectEverySlot: grid.spec.expectEverySlot
         )
 
         // Only persist sessions with actual playing.
@@ -532,5 +606,36 @@ final class TransportController {
                 self.updateIdleMonitoring()
             }
         }
+    }
+}
+
+/// Reads last-used settings back from UserDefaults. Free functions because
+/// property initializers run before `self` exists. `object(forKey:)`
+/// distinguishes a missing key from a stored 0/false (`double(forKey:)`
+/// would zero every setting on first launch), enum raw values round-trip
+/// through the failable initializer, and ranges clamp values written by
+/// older builds to the current UI controls.
+private enum Persisted {
+    static func double(_ key: String, _ fallback: Double, in range: ClosedRange<Double>? = nil) -> Double {
+        guard let value = UserDefaults.standard.object(forKey: key) as? Double else { return fallback }
+        return range.map { value.clamped(to: $0) } ?? value
+    }
+
+    static func int(_ key: String, _ fallback: Int, in range: ClosedRange<Int>? = nil) -> Int {
+        guard let value = UserDefaults.standard.object(forKey: key) as? Int else { return fallback }
+        return range.map { Swift.min(Swift.max(value, $0.lowerBound), $0.upperBound) } ?? value
+    }
+
+    static func bool(_ key: String, _ fallback: Bool) -> Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? fallback
+    }
+
+    static func rawValue<T: RawRepresentable>(_ key: String, _ fallback: T) -> T where T.RawValue == String {
+        UserDefaults.standard.string(forKey: key).flatMap(T.init(rawValue:)) ?? fallback
+    }
+
+    static func snapped(_ key: String, _ fallback: Double, to allowed: [Double]) -> Double {
+        guard let value = UserDefaults.standard.object(forKey: key) as? Double else { return fallback }
+        return allowed.min { abs($0 - value) < abs($1 - value) } ?? fallback
     }
 }

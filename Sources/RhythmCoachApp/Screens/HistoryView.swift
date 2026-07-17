@@ -4,8 +4,11 @@ import SwiftUI
 
 struct HistoryView: View {
     @State private var sessions: [SessionRecord] = []
+    @State private var displayNames: [SessionRecord.ID: String] = [:]
     @State private var selection: SessionRecord.ID?
     @State private var trendMode: TrendMode = .percent
+    @State private var renameTargetID: SessionRecord.ID?
+    @State private var renameText = ""
 
     private enum TrendMode: String, CaseIterable, Identifiable {
         case percent = "% of grid"
@@ -24,8 +27,13 @@ struct HistoryView: View {
                 List(sessions, selection: $selection) { session in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
-                            Text(session.startedAt, format: .dateTime.day().month().hour().minute())
-                                .font(.headline)
+                            if let name = displayNames[session.id] {
+                                Text(name)
+                                    .font(.headline)
+                            } else {
+                                Text(session.startedAt, format: .dateTime.day().month().hour().minute())
+                                    .font(.headline)
+                            }
                             Spacer()
                             if let rating = session.rating {
                                 TierBadge(tier: rating.overall)
@@ -34,12 +42,22 @@ struct HistoryView: View {
                                 .font(.subheadline.monospacedDigit())
                                 .foregroundStyle(session.rating?.overall.color ?? .secondary)
                         }
-                        Text(session.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if displayNames[session.id] != nil {
+                            Text("\(session.startedAt, format: .dateTime.day().month().hour().minute()) · \(session.subtitle)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(session.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .tag(session.id)
                     .contextMenu {
+                        Button("Rename session…") {
+                            renameText = session.name ?? ""
+                            renameTargetID = session.id
+                        }
                         Button("Delete session", role: .destructive) {
                             Database.shared.deleteSession(id: session.id)
                             reload()
@@ -47,11 +65,18 @@ struct HistoryView: View {
                     }
                 }
                 .listStyle(.inset)
+                .alert("Rename session", isPresented: renameActive) {
+                    TextField("Name", text: $renameText)
+                    Button("Save") { commitRename() }
+                    Button("Cancel", role: .cancel) { renameTargetID = nil }
+                } message: {
+                    Text("Leave empty to remove the name.")
+                }
             }
             .frame(minWidth: 340, maxWidth: 460)
 
             if let session = sessions.first(where: { $0.id == selection }) {
-                SessionDetailView(session: session)
+                SessionDetailView(session: session, displayName: displayNames[session.id])
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView(
@@ -67,6 +92,19 @@ struct HistoryView: View {
 
     private func reload() {
         sessions = Database.shared.sessions()
+        displayNames = SessionNaming.displayNames(for: sessions)
+    }
+
+    private var renameActive: Binding<Bool> {
+        Binding(get: { renameTargetID != nil }, set: { if !$0 { renameTargetID = nil } })
+    }
+
+    private func commitRename() {
+        guard let id = renameTargetID else { return }
+        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        Database.shared.updateSessionName(id: id, name: trimmed.isEmpty ? nil : trimmed)
+        renameTargetID = nil
+        reload()
     }
 
     /// Sessions the current trend mode can plot: % mode needs a known grid.
@@ -131,14 +169,29 @@ struct HistoryView: View {
 
 struct SessionDetailView: View {
     let session: SessionRecord
+    var displayName: String? = nil
     @State private var hits: [HitRow] = []
+    @State private var exportError: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(session.startedAt, format: .dateTime.weekday().day().month().year().hour().minute())
-                        .font(.title2.weight(.semibold))
+                    HStack(alignment: .firstTextBaseline) {
+                        if let displayName {
+                            Text(displayName)
+                                .font(.title2.weight(.semibold))
+                        } else {
+                            Text(session.startedAt, format: .dateTime.weekday().day().month().year().hour().minute())
+                                .font(.title2.weight(.semibold))
+                        }
+                        Spacer()
+                        exportMenu
+                    }
+                    if displayName != nil {
+                        Text(session.startedAt, format: .dateTime.weekday().day().month().year().hour().minute())
+                            .foregroundStyle(.secondary)
+                    }
                     Text("\(session.subtitle) · \(Int(session.durationSec)) s · \(session.inputDeviceName)")
                         .foregroundStyle(.secondary)
                     Text(String(
@@ -169,25 +222,32 @@ struct SessionDetailView: View {
                 }
 
                 if !hits.isEmpty {
+                    let data = SessionChartData(session: session, rows: hits)
                     Text("Deviation timeline").font(.headline)
-                    DeviationScatterView(
-                        hits: hits.map {
-                            Hit(slotIndex: $0.slotIndex, gridSample: 0, onsetSample: $0.onsetSample,
-                                deviationMs: $0.deviationMs, deviationPctIOI: 0, strength: 1)
-                        },
-                        toleranceMs: session.toleranceMs
-                    )
-                    .frame(height: 180)
+                    DeviationScatterView(hits: data.hits, toleranceMs: session.toleranceMs)
+                        .frame(height: 180)
 
-                    if !rollingPoints.isEmpty && session.slotIOIMs > 0 {
-                        Text("Stability over time (SD of last \(RollingStats.windowHits) hits)")
-                            .font(.headline)
-                        RollingSDChart(points: rollingPoints, slotIOIMs: session.slotIOIMs)
-                            .frame(height: 160)
+                    if !data.rollingPoints.isEmpty && session.slotIOIMs > 0 {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Bias over time (mean of last \(RollingStats.windowHits) hits)")
+                                    .font(.headline)
+                                RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs, metric: .mean)
+                                    .frame(height: 160)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Stability over time (SD of last \(RollingStats.windowHits) hits)")
+                                    .font(.headline)
+                                RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs, metric: .sd)
+                                    .frame(height: 160)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
 
                     Text("Distribution").font(.headline)
-                    HistogramView(histogram: histogramFromHits, toleranceMs: session.toleranceMs)
+                    HistogramView(histogram: data.histogram, toleranceMs: session.toleranceMs)
                         .frame(height: 100)
                 }
 
@@ -226,12 +286,28 @@ struct SessionDetailView: View {
         }
     }
 
-    private var histogramFromHits: [Int] {
-        var bins = [Int](repeating: 0, count: Histogram.binCount)
-        for hit in hits where hit.kind == "hit" {
-            bins[Histogram.bin(forDeviationMs: hit.deviationMs)] += 1
+    private var exportMenu: some View {
+        Menu {
+            Button("Export as PNG…") { export(as: .png) }
+            Button("Export as PDF…") { export(as: .pdf) }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
         }
-        return bins
+        .fixedSize()
+        .alert("Export failed", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
+    }
+
+    private func export(as format: SessionReportExporter.Format) {
+        exportError = SessionReportExporter.promptAndExport(
+            session: session, hits: hits, displayName: displayName, format: format
+        )
     }
 
     private var meanDetail: String {
@@ -246,20 +322,12 @@ struct SessionDetailView: View {
         guard let rating = session.rating else { return pct }
         return "\(rating.stability.label) · \(pct)"
     }
-
-    private var rollingPoints: [RollingPoint] {
-        guard session.sampleRate > 0 else { return [] }
-        let hitRows = hits.filter { $0.kind == "hit" }.sorted { $0.onsetSample < $1.onsetSample }
-        return RollingStats.windowedSD(
-            timesSec: hitRows.map { $0.onsetSample / session.sampleRate },
-            deviationsMs: hitRows.map(\.deviationMs)
-        )
-    }
 }
 
 struct SessionSummarySheet: View {
     let session: SessionRecord
     @Environment(\.dismiss) private var dismiss
+    @State private var exportError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -269,6 +337,10 @@ struct SessionSummarySheet: View {
                 if let rating = session.rating {
                     TierBadge(tier: rating.overall)
                 }
+            }
+            if let name = session.name {
+                Text(name)
+                    .font(.title3.weight(.medium))
             }
             Text(session.subtitle)
                 .foregroundStyle(.secondary)
@@ -290,10 +362,17 @@ struct SessionSummarySheet: View {
                         color: .primary)
             }
 
-            Text(verdict)
+            Text(session.verdictText)
                 .font(.callout)
 
             HStack {
+                Menu {
+                    Button("Export as PNG…") { export(as: .png) }
+                    Button("Export as PDF…") { export(as: .pdf) }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .fixedSize()
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -301,42 +380,22 @@ struct SessionSummarySheet: View {
         }
         .padding(24)
         .frame(width: 620)
+        .alert("Export failed", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
     }
 
-    private var verdict: String {
-        guard let rating = session.rating else {
-            return "Not enough hits to rate this session."
-        }
-        var parts: [String] = []
-        switch rating.accuracy {
-        case .pro:
-            parts.append("Bias is excellent — dead on the grid.")
-        case .good:
-            parts.append(String(format: "Bias is good (%+.0f ms).", session.meanMs))
-        case .fair, .poor:
-            if session.meanMs < 0 {
-                parts.append(String(format: "You tend to rush by %.0f ms — the classic anticipation tendency.", -session.meanMs))
-            } else {
-                parts.append(String(format: "You sit %.0f ms behind the click.", session.meanMs))
-            }
-        }
-        switch rating.stability {
-        case .pro:
-            parts.append("Stability is in the pro range.")
-        case .good:
-            parts.append("Solid stability — push the tempo or tighten toward pro.")
-        case .fair:
-            parts.append("Stability is fair; slow the tempo to tighten further.")
-        case .poor:
-            parts.append("High variance — drop the BPM and focus on consistency.")
-        }
-        if abs(session.driftMsPerMin) >= 5 {
-            parts.append(String(
-                format: "Watch the drift: you %@ by %.0f ms per minute.",
-                session.driftMsPerMin < 0 ? "speed up" : "slow down",
-                abs(session.driftMsPerMin)
-            ))
-        }
-        return parts.joined(separator: " ")
+    private func export(as format: SessionReportExporter.Format) {
+        exportError = SessionReportExporter.promptAndExport(
+            session: session,
+            hits: Database.shared.hits(sessionID: session.id),
+            displayName: session.name,
+            format: format
+        )
     }
 }
