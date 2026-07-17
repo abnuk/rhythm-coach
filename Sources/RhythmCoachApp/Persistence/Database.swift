@@ -30,6 +30,9 @@ struct SessionRecord: Identifiable, Sendable, Hashable {
     var pctInTolerance: Double
     var driftMsPerMin: Double
     var lag1: Double
+    /// nil for sessions recorded before these columns existed.
+    var beatsPerBar: Int? = nil
+    var countInBars: Int? = nil
 }
 
 struct HitRow: Sendable {
@@ -97,6 +100,8 @@ final class Database {
         """)
         exec("CREATE INDEX IF NOT EXISTS hit_session ON hit(sessionId)")
         addColumnIfMissing(table: "session", column: "clickDensity", ddl: "TEXT DEFAULT 'everySlot'")
+        addColumnIfMissing(table: "session", column: "beatsPerBar", ddl: "INTEGER")
+        addColumnIfMissing(table: "session", column: "countInBars", ddl: "INTEGER")
         exec("""
         CREATE TABLE IF NOT EXISTS calibration (
           inputUID TEXT, outputUID TEXT, sampleRate REAL, bufferFrames INTEGER,
@@ -130,8 +135,8 @@ final class Database {
           targetOffsetMs, sampleRate, bufferFrames, inputDeviceName,
           latencyCompMs, latencySource, toleranceMs, audioPath,
           hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
-          pctInTolerance, driftMsPerMin, lag1, clickDensity
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar, countInBars
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, session.id)
@@ -159,6 +164,8 @@ final class Database {
         sqlite3_bind_double(stmt, 23, session.driftMsPerMin)
         sqlite3_bind_double(stmt, 24, session.lag1)
         bindText(stmt, 25, session.clickDensity)
+        bindInt(stmt, 26, session.beatsPerBar)
+        bindInt(stmt, 27, session.countInBars)
         sqlite3_step(stmt)
 
         var hitStmt: OpaquePointer?
@@ -206,7 +213,9 @@ final class Database {
                 maxMs: sqlite3_column_double(stmt, 20),
                 pctInTolerance: sqlite3_column_double(stmt, 21),
                 driftMsPerMin: sqlite3_column_double(stmt, 22),
-                lag1: sqlite3_column_double(stmt, 23)
+                lag1: sqlite3_column_double(stmt, 23),
+                beatsPerBar: intOrNil(stmt, 25),
+                countInBars: intOrNil(stmt, 26)
             ))
         }
         return result
@@ -292,8 +301,21 @@ final class Database {
         }
     }
 
+    private func bindInt(_ stmt: OpaquePointer?, _ index: Int32, _ value: Int?) {
+        if let value {
+            sqlite3_bind_int(stmt, index, Int32(value))
+        } else {
+            sqlite3_bind_null(stmt, index)
+        }
+    }
+
     private func text(_ stmt: OpaquePointer?, _ index: Int32) -> String? {
         guard let cString = sqlite3_column_text(stmt, index) else { return nil }
         return String(cString: cString)
+    }
+
+    private func intOrNil(_ stmt: OpaquePointer?, _ index: Int32) -> Int? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return Int(sqlite3_column_int(stmt, index))
     }
 }

@@ -16,9 +16,24 @@ struct PracticeView: View {
                     hits: transport.liveHits,
                     toleranceMs: transport.toleranceMs
                 )
-                .frame(minHeight: 180)
+                .frame(minHeight: 120)
                 HistogramView(histogram: transport.snapshot.histogram, toleranceMs: transport.toleranceMs)
                     .frame(height: 110)
+                if !transport.isRunning,
+                   let session = transport.lastSession,
+                   let path = session.audioPath {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Last take")
+                            .font(.headline)
+                        WaveformSessionView(
+                            audioURL: URL(fileURLWithPath: path),
+                            grid: WaveformGridParams(record: session),
+                            hits: WaveformHitMarker.markers(hits: transport.lastSessionHits, record: session)
+                        )
+                        .frame(minHeight: 200, idealHeight: 240)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)

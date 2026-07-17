@@ -83,6 +83,18 @@ struct Runner {
         runTest("overflow drops, never blocks") { ring.overflow() }
         await runTest("concurrent producer/consumer") { await ring.concurrent() }
 
+        suite("Waveform")
+        let waveform = WaveformTests()
+        runTest("pyramid exact on bucket boundaries") { waveform.pyramidExactOnBucketBoundaries() }
+        runTest("pyramid conservative on arbitrary ranges") { waveform.pyramidConservative() }
+        runTest("level selection") { waveform.levelSelection() }
+        runTest("columnMinMax raw/pyramid/tail") { waveform.columnMinMax() }
+        runTest("viewport round trip, zoom anchor, clamps") { waveform.viewportRoundTripAndZoom() }
+        runTest("viewport follow anchoring") { waveform.viewportFollow() }
+        runTest("grid mapping in WAV domain") { waveform.gridMapping() }
+        runTest("hit deviation invariant") { waveform.hitDeviationInvariant() }
+        runTest("WaveformData load round trip") { try waveform.loadRoundTrip() }
+
         finishTests()
     }
 }

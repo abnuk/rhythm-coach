@@ -86,6 +86,11 @@ final class TransportController {
     var liveHits: [Hit] = []
     var lastError: String?
     var finishedSession: SessionRecord?
+    /// Last persisted session, kept after the summary sheet is dismissed
+    /// (`.sheet(item:)` nils `finishedSession` on dismiss) so the practice
+    /// screen can keep showing the take's waveform.
+    var lastSession: SessionRecord?
+    var lastSessionHits: [Hit] = []
 
     private let engine = DuplexEngine()
     private var pipeline: AnalysisPipeline?
@@ -185,6 +190,8 @@ final class TransportController {
         stopIdleMonitoring()
         lastError = nil
         finishedSession = nil
+        lastSession = nil
+        lastSessionHits = []
 
         do {
             try engine.configure(DuplexEngine.EngineConfig(
@@ -286,7 +293,9 @@ final class TransportController {
             maxMs: final.maxMs,
             pctInTolerance: final.pctInTolerance,
             driftMsPerMin: final.driftMsPerMin,
-            lag1: final.lag1
+            lag1: final.lag1,
+            beatsPerBar: grid.spec.beatsPerBar,
+            countInBars: grid.spec.countInBars
         )
 
         // Only persist sessions with actual playing.
@@ -297,6 +306,8 @@ final class TransportController {
             }
             Database.shared.save(session: record, hits: hitRows)
             finishedSession = record
+            lastSession = record
+            lastSessionHits = result.hits
         } else if let url = result.recordingURL {
             try? FileManager.default.removeItem(at: url)
         }

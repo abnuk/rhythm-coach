@@ -155,16 +155,18 @@ struct SessionDetailView: View {
 
                 if let path = session.audioPath {
                     if FileManager.default.fileExists(atPath: path) {
+                        Text("Waveform").font(.headline)
+                        WaveformSessionView(
+                            audioURL: URL(fileURLWithPath: path),
+                            grid: WaveformGridParams(record: session),
+                            hits: WaveformHitMarker.markers(rows: hits, record: session)
+                        )
+                        .frame(height: 260)
                         HStack {
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                             } label: {
                                 Label("Show recording in Finder", systemImage: "waveform")
-                            }
-                            Button {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: path))
-                            } label: {
-                                Label("Play", systemImage: "play.circle")
                             }
                         }
                     } else {
