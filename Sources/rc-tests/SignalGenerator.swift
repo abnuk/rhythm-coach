@@ -77,6 +77,25 @@ enum SignalGenerator {
         return out
     }
 
+    /// A long-ringing low note with strong beating: two slightly detuned
+    /// Karplus-Strong plucks started together. Every shared harmonic beats
+    /// at a multiple of the detune, so the decay tail carries broadband
+    /// amplitude swells that re-excite the whitened spectrum the way a
+    /// ringing low string does between hits.
+    static func beatingTailNote(frequency: Double = 80, detune: Double = 2.5,
+                                duration: Double, sampleRate: Double,
+                                amplitude: Float = 0.4, damping: Float = 0.999) -> [Float] {
+        var out = pluck(frequency: frequency, duration: duration, sampleRate: sampleRate,
+                        amplitude: amplitude, damping: damping, seed: 21)
+        let second = pluck(frequency: frequency + detune, duration: duration, sampleRate: sampleRate,
+                           amplitude: amplitude, damping: damping, seed: 22)
+        let third = pluck(frequency: frequency + 2.4 * detune, duration: duration, sampleRate: sampleRate,
+                          amplitude: amplitude * 0.7, damping: damping, seed: 23)
+        mix(second, into: &out, at: 0)
+        mix(third, into: &out, at: 0)
+        return out
+    }
+
     /// Low-level uniform noise floor across the whole buffer.
     static func addNoiseFloor(_ buffer: inout [Float], amplitudeDb: Double, seed: UInt64 = 42) {
         let amp = Float(pow(10, amplitudeDb / 20))
