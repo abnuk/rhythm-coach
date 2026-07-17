@@ -65,7 +65,7 @@ Line Tools** (full Xcode works too):
 
 ```sh
 ./Scripts/make-app.sh          # builds dist/RhythmCoach.app (release)
-swift run rc-tests             # hermetic test suite (52 tests)
+swift run rc-tests             # hermetic test suite (73 tests)
 swift run rc-cli devices       # headless harness: list devices
 ```
 
