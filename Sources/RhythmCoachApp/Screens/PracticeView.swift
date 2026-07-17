@@ -311,11 +311,14 @@ private struct LiveRollingChartsView: View {
     let slotIOIMs: Double
 
     var body: some View {
-        let recent = hits.suffix(600)
+        // Window over the whole session, not a trailing slice — a suffix cap
+        // makes the first point's time creep forward once the session outgrows
+        // it, so the chart's X domain (auto-fit, no fixed scale) eats the start
+        // of the recording. History windows over every hit; live must match.
         let points = sampleRate > 0
             ? RollingStats.windowedSD(
-                timesSec: recent.map { $0.onsetSample / sampleRate },
-                deviationsMs: recent.map(\.deviationMs)
+                timesSec: hits.map { $0.onsetSample / sampleRate },
+                deviationsMs: hits.map(\.deviationMs)
             )
             : []
         HStack(spacing: 12) {
