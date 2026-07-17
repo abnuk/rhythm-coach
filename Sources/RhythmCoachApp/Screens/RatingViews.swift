@@ -41,6 +41,15 @@ extension SessionRecord {
     var rating: TimingRating? {
         TimingRating(sdMs: sdMs, meanMs: meanMs, slotIOIMs: slotIOIMs, hitCount: hitCount)
     }
+
+    /// "target advanced (±27 ms)" when a level was set; plain tolerance
+    /// for old rows and Custom sessions.
+    var targetDescription: String {
+        if let raw = targetLevel, let level = TargetLevel(rawValue: raw) {
+            return "target \(level.displayName.lowercased()) (±\(Int(toleranceMs.rounded())) ms)"
+        }
+        return "tolerance ±\(Int(toleranceMs.rounded())) ms"
+    }
 }
 
 /// Windowed-SD line over session time, on top of stability tier bands

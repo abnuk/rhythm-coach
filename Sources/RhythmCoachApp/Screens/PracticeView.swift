@@ -105,11 +105,23 @@ struct PracticeView: View {
                 Text(targetDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("Tolerance", selection: $transport.toleranceMs) {
-                    ForEach([5.0, 10, 15, 20, 30], id: \.self) { tolerance in
-                        Text("±\(Int(tolerance)) ms").tag(tolerance)
+                Picker("Skill target", selection: $transport.targetLevel) {
+                    ForEach(TargetLevel.allCases) { level in
+                        Text(level.displayName).tag(Optional(level))
+                    }
+                    Divider()
+                    Text("Custom").tag(TargetLevel?.none)
+                }
+                if transport.targetLevel == nil {
+                    Picker("Tolerance", selection: $transport.customToleranceMs) {
+                        ForEach([5.0, 10, 15, 20, 30], id: \.self) { tolerance in
+                            Text("±\(Int(tolerance)) ms").tag(tolerance)
+                        }
                     }
                 }
+                Text(toleranceCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Expect a note on every slot", isOn: $transport.expectEverySlot)
                 if !transport.expectEverySlot {
                     Text("Empty slots are not counted as missed — for patterns with rests.")
@@ -135,6 +147,13 @@ struct PracticeView: View {
         }
         .formStyle(.grouped)
         .disabled(false)
+    }
+
+    private var toleranceCaption: String {
+        let ms = Int(transport.toleranceMs.rounded())
+        if transport.isRunning { return "Window ±\(ms) ms — locked for this take" }
+        guard transport.targetLevel != nil else { return "Window ±\(ms) ms — fixed, ignores tempo" }
+        return "Window ±\(ms) ms at \(Int(transport.bpm)) BPM · \(transport.subdivision.displayName) grid"
     }
 
     private var targetDescription: String {
@@ -195,11 +214,14 @@ struct PracticeView: View {
     private var statsRow: some View {
         let stats = transport.snapshot
         let canRate = stats.slotIOIMs > 0 && stats.hitCount >= 2
-        // Live tiers follow the rolling window (the last few bars), so the
-        // label reflects what you are playing now, not the session average.
+        // While running, the SD tile is entirely rolling-window (number,
+        // tier, and title all describe what you are playing NOW); once
+        // stopped it is entirely whole-session, matching the summary sheet
+        // and history. Never mix the two metrics in one tile.
+        let showRolling = transport.isRunning && stats.rollingSdMs != nil
+        let sdShown = showRolling ? (stats.rollingSdMs ?? stats.sdMs) : stats.sdMs
         let stabilityTier: TimingTier? = canRate
-            ? TierThresholds.stability.tier(forAbsMs: stats.rollingSdMs ?? stats.sdMs,
-                                            slotIOIMs: stats.slotIOIMs)
+            ? TierThresholds.stability.tier(forAbsMs: sdShown, slotIOIMs: stats.slotIOIMs)
             : nil
         let accuracyTier: TimingTier? = canRate
             ? TierThresholds.accuracy.tier(forAbsMs: abs(stats.meanMs), slotIOIMs: stats.slotIOIMs)
@@ -213,13 +235,15 @@ struct PracticeView: View {
                 color: accuracyTier?.color ?? .primary
             )
             StatBox(
-                title: "SD (stability)",
-                value: String(format: "%.1f ms", stats.sdMs),
-                detail: stabilityDetail(stats, tier: stabilityTier),
+                title: showRolling
+                    ? "SD (last \(min(stats.hitCount, RollingStats.windowHits)))"
+                    : "SD (stability)",
+                value: String(format: "%.1f ms", sdShown),
+                detail: stabilityDetail(stats, tier: stabilityTier, showRolling: showRolling),
                 color: stabilityTier?.color ?? .primary
             )
             StatBox(
-                title: "IN ±\(Int(transport.toleranceMs)) MS",
+                title: "IN ±\(Int(transport.toleranceMs.rounded())) MS",
                 value: String(format: "%.0f%%", stats.pctInTolerance),
                 detail: "\(stats.hitCount) hits · \(stats.missedCount) missed · \(stats.extraCount) extra",
                 color: .primary
@@ -244,11 +268,10 @@ struct PracticeView: View {
         return mean > 0 ? "behind the beat" : "ahead of the beat"
     }
 
-    private func stabilityDetail(_ stats: LiveStatsSnapshot, tier: TimingTier?) -> String {
+    private func stabilityDetail(_ stats: LiveStatsSnapshot, tier: TimingTier?, showRolling: Bool) -> String {
         guard let tier else { return "—" }
-        guard let rolling = stats.rollingSdMs else { return tier.label }
-        let windowSize = min(stats.hitCount, RollingStats.windowHits)
-        return String(format: "%@ · last %d: %.1f ms", tier.label, windowSize, rolling)
+        guard showRolling else { return tier.label }
+        return String(format: "%@ · session %.1f ms", tier.label, stats.sdMs)
     }
 
     private func driftLabel(_ drift: Double) -> String {
@@ -287,13 +310,18 @@ struct StatBox: View {
 struct DeviationScatterView: View {
     let hits: [Hit]
     let toleranceMs: Double
-    private let rangeMs: Double = 50
+    /// Y-range: ±50 ms, widened (to the next 10) when the tolerance band
+    /// would not fit — e.g. Beginner windows reach ±60 ms.
+    private var rangeMs: Double {
+        max(50, (toleranceMs * 1.25 / 10).rounded(.up) * 10)
+    }
 
     var body: some View {
+        let range = rangeMs
         Canvas { context, size in
             let midY = size.height / 2
             func y(forMs ms: Double) -> CGFloat {
-                midY - CGFloat(ms.clamped(to: -rangeMs...rangeMs) / rangeMs) * (size.height / 2 - 8)
+                midY - CGFloat(ms.clamped(to: -range...range) / range) * (size.height / 2 - 8)
             }
 
             // Tolerance band.

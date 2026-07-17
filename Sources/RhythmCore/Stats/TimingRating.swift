@@ -75,6 +75,54 @@ public struct TierThresholds: Sendable {
     public static let accuracy = TierThresholds(pro: (5, 0.02), good: (10, 0.04), fair: (15, 0.06))
 }
 
+/// The level a player aspires to. Sets the per-hit tolerance window as
+/// `windowSigma ×` the stability limit of the matching tier, capped at the
+/// scorer's matching window: when SD sits exactly on the targeted tier's
+/// boundary (and bias is small), ~90% of hits land inside — so holding
+/// ≥90% in-tolerance means the level is met.
+public enum TargetLevel: String, CaseIterable, Codable, Sendable, Identifiable {
+    case beginner
+    case intermediate
+    case advanced
+    case pro
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .beginner: "Beginner"
+        case .intermediate: "Intermediate"
+        case .advanced: "Advanced"
+        case .pro: "Pro"
+        }
+    }
+
+    /// ≈1.645σ (two-sided 90%), rounded.
+    public static let windowSigma = 1.6
+
+    /// Virtual rung below fair, extrapolating the 8→12→20 ms / 3→5→8%
+    /// ladder's own progression ("poor" has no upper boundary to anchor to).
+    private static let beginnerFloorMs = 30.0
+    private static let beginnerFracIOI = 0.12
+
+    private func anchorMs(slotIOIMs: Double) -> Double {
+        switch self {
+        case .pro: TierThresholds.stability.proLimitMs(slotIOIMs: slotIOIMs)
+        case .advanced: TierThresholds.stability.goodLimitMs(slotIOIMs: slotIOIMs)
+        case .intermediate: TierThresholds.stability.fairLimitMs(slotIOIMs: slotIOIMs)
+        case .beginner: max(Self.beginnerFloorMs, Self.beginnerFracIOI * slotIOIMs)
+        }
+    }
+
+    /// Per-hit tolerance half-window in ms, capped at the scorer's matching
+    /// window (beyond it, onsets become "extra" and can never count).
+    public func windowMs(slotIOIMs: Double) -> Double {
+        let raw = Self.windowSigma * anchorMs(slotIOIMs: slotIOIMs)
+        guard slotIOIMs > 0 else { return raw }
+        return min(raw, TimingScorer.matchWindowMs(slotIOIMs: slotIOIMs))
+    }
+}
+
 /// Tempo-normalized quality rating of a take or session.
 public struct TimingRating: Sendable, Equatable {
     public let stability: TimingTier

@@ -19,6 +19,8 @@ struct SessionRecord: Identifiable, Sendable, Hashable {
     var latencyCompMs: Double
     var latencySource: String
     var toleranceMs: Double
+    /// nil for old rows and Custom-tolerance sessions.
+    var targetLevel: String? = nil
     var audioPath: String?
     var hitCount: Int
     var missedCount: Int
@@ -102,6 +104,7 @@ final class Database {
         addColumnIfMissing(table: "session", column: "clickDensity", ddl: "TEXT DEFAULT 'everySlot'")
         addColumnIfMissing(table: "session", column: "beatsPerBar", ddl: "INTEGER")
         addColumnIfMissing(table: "session", column: "countInBars", ddl: "INTEGER")
+        addColumnIfMissing(table: "session", column: "targetLevel", ddl: "TEXT")
         exec("""
         CREATE TABLE IF NOT EXISTS calibration (
           inputUID TEXT, outputUID TEXT, sampleRate REAL, bufferFrames INTEGER,
@@ -135,8 +138,9 @@ final class Database {
           targetOffsetMs, sampleRate, bufferFrames, inputDeviceName,
           latencyCompMs, latencySource, toleranceMs, audioPath,
           hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
-          pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar, countInBars
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar, countInBars,
+          targetLevel
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, session.id)
@@ -166,6 +170,7 @@ final class Database {
         bindText(stmt, 25, session.clickDensity)
         bindInt(stmt, 26, session.beatsPerBar)
         bindInt(stmt, 27, session.countInBars)
+        bindText(stmt, 28, session.targetLevel)
         sqlite3_step(stmt)
 
         var hitStmt: OpaquePointer?
@@ -203,6 +208,7 @@ final class Database {
                 latencyCompMs: sqlite3_column_double(stmt, 10),
                 latencySource: text(stmt, 11) ?? "reported",
                 toleranceMs: sqlite3_column_double(stmt, 12),
+                targetLevel: text(stmt, 27),
                 audioPath: text(stmt, 13),
                 hitCount: Int(sqlite3_column_int(stmt, 14)),
                 missedCount: Int(sqlite3_column_int(stmt, 15)),

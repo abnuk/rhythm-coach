@@ -46,11 +46,18 @@ public final class TimingScorer {
     private var reportedMissed: Set<Int> = []
     private var highestFullyPassedSlot: Int = -1
 
+    /// Matching half-window in ms for a slot interval: min(half slot, 60 ms).
+    /// Onsets farther from the nearest slot than this can never be matched.
+    public static func matchWindowMs(slotIOIMs: Double) -> Double {
+        min(slotIOIMs / 2, 60)
+    }
+
     public init(grid: ClickGrid, latencyCompensationSamples: Double) {
         self.grid = grid
         self.latencyCompensationSamples = latencyCompensationSamples
         self.targetOffsetSamples = grid.spec.targetOffsetMs / 1000 * grid.sampleRate
-        self.windowSamples = min(grid.samplesPerSlot / 2, 0.060 * grid.sampleRate)
+        let slotMs = grid.samplesPerSlot / grid.sampleRate * 1000
+        self.windowSamples = Self.matchWindowMs(slotIOIMs: slotMs) / 1000 * grid.sampleRate
     }
 
     /// Reference time for a slot (grid + intentional target offset).

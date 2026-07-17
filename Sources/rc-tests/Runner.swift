@@ -55,6 +55,15 @@ struct Runner {
         runTest("sign and nil cases") { rating.signAndNil() }
         runTest("overall combination rule") { rating.overallRule() }
 
+        suite("TargetLevel")
+        let target = TargetLevelTests()
+        runTest("floor regime windows") { target.floorRegime() }
+        runTest("percent regime + 60 ms cap") { target.percentRegimeAndCap() }
+        runTest("floor/percent crossover") { target.crossover() }
+        runTest("fast subdivision match-window cap") { target.fastSubdivisionCap() }
+        runTest("sigma × tier-limit consistency") { target.sigmaConsistency() }
+        runTest("rawValue round trip") { target.rawValueRoundTrip() }
+
         suite("RollingStats")
         let rolling = RollingStatsTests()
         runTest("fewer than window → empty") { rolling.tooFew() }

@@ -68,6 +68,65 @@ import RhythmCore
     }
 }
 
+@MainActor struct TargetLevelTests {
+    /// IOI 100 ms: floors govern and stay under the 50 ms match cap
+    /// (except beginner, capped at halfSlot).
+    func floorRegime() {
+        let ioi = 100.0
+        expect(abs(TargetLevel.pro.windowMs(slotIOIMs: ioi) - 12.8) < 1e-9)
+        expect(abs(TargetLevel.advanced.windowMs(slotIOIMs: ioi) - 19.2) < 1e-9)
+        expect(abs(TargetLevel.intermediate.windowMs(slotIOIMs: ioi) - 32) < 1e-9)
+        expect(abs(TargetLevel.beginner.windowMs(slotIOIMs: ioi) - 48) < 1e-9)
+    }
+
+    /// IOI 500 ms: percent anchors govern; loose levels hit the 60 ms cap.
+    func percentRegimeAndCap() {
+        let ioi = 500.0
+        expect(abs(TargetLevel.pro.windowMs(slotIOIMs: ioi) - 24) < 1e-9)       // 1.6 × 5%
+        expect(abs(TargetLevel.advanced.windowMs(slotIOIMs: ioi) - 40) < 1e-9)  // 1.6 × 8%
+        expect(abs(TargetLevel.intermediate.windowMs(slotIOIMs: ioi) - 60) < 1e-9)  // 64 → cap
+        expect(abs(TargetLevel.beginner.windowMs(slotIOIMs: ioi) - 60) < 1e-9)      // 96 → cap
+    }
+
+    /// Pro anchor hands over from floor to percent at IOI = 8/0.03 ≈ 266.7.
+    func crossover() {
+        let crossIOI = 8.0 / 0.03
+        expect(abs(TargetLevel.pro.windowMs(slotIOIMs: crossIOI - 10) - 12.8) < 1e-9)
+        let above = crossIOI + 10
+        expect(abs(TargetLevel.pro.windowMs(slotIOIMs: above) - 1.6 * 0.03 * above) < 1e-9)
+    }
+
+    /// IOI 62.5 ms (240 BPM 1/16): match window 31.25 ms caps loose levels.
+    func fastSubdivisionCap() {
+        let ioi = 62.5
+        expect(abs(TimingScorer.matchWindowMs(slotIOIMs: 100) - 50) < 1e-9)
+        expect(abs(TimingScorer.matchWindowMs(slotIOIMs: 500) - 60) < 1e-9)
+        expect(abs(TargetLevel.pro.windowMs(slotIOIMs: ioi) - 12.8) < 1e-9)
+        expect(abs(TargetLevel.intermediate.windowMs(slotIOIMs: ioi) - 31.25) < 1e-9)
+        expect(abs(TargetLevel.beginner.windowMs(slotIOIMs: ioi) - 31.25) < 1e-9)
+    }
+
+    /// Below the cap, windowMs must equal windowSigma × the stability tier
+    /// limit — locks the derivation to TierThresholds.
+    func sigmaConsistency() {
+        for ioi in [80.0, 150, 250] {
+            expect(TargetLevel.pro.windowMs(slotIOIMs: ioi)
+                == TargetLevel.windowSigma * TierThresholds.stability.proLimitMs(slotIOIMs: ioi))
+            expect(TargetLevel.advanced.windowMs(slotIOIMs: ioi)
+                == TargetLevel.windowSigma * TierThresholds.stability.goodLimitMs(slotIOIMs: ioi))
+            expect(TargetLevel.intermediate.windowMs(slotIOIMs: ioi)
+                == TargetLevel.windowSigma * TierThresholds.stability.fairLimitMs(slotIOIMs: ioi))
+        }
+    }
+
+    func rawValueRoundTrip() {
+        for level in TargetLevel.allCases {
+            expect(TargetLevel(rawValue: level.rawValue) == level)
+        }
+        expect(TargetLevel(rawValue: "custom") == nil)
+    }
+}
+
 @MainActor struct RollingStatsTests {
     func tooFew() {
         let times = (0..<15).map(Double.init)

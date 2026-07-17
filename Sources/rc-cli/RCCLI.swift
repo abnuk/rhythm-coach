@@ -50,6 +50,7 @@ enum RCCLI {
                       [--count-in-bars 1] [--dump-onsets]
                       [--attack-ratio 1.5] [--attack-crest 0.4]
                       [--attack-pre 25] [--attack-post 10]
+                      [--target-level beginner|intermediate|advanced|pro]
                                            detect onsets + score vs grid
           selftest    [--in ID] [--out ID] [--rate 48000] [--buffer 128]
                       [--seconds 10]           calibrate, then loop the app's
@@ -223,8 +224,11 @@ enum RCCLI {
         if let v = options["attack-post"].flatMap(Double.init) { detectorConfig.attackPostMs = v }
         let detector = OnsetDetector(config: detectorConfig, sampleRate: sampleRate)
         let scorer = TimingScorer(grid: grid, latencyCompensationSamples: latencySamples)
-        let stats = StatsAccumulator(toleranceMs: 15, sampleRate: sampleRate,
-                                     slotIOIMs: grid.samplesPerSlot / sampleRate * 1000)
+        let gridSlotMs = grid.samplesPerSlot / sampleRate * 1000
+        let toleranceMs = options["target-level"].flatMap(TargetLevel.init(rawValue:))
+            .map { $0.windowMs(slotIOIMs: gridSlotMs) } ?? 15
+        let stats = StatsAccumulator(toleranceMs: toleranceMs, sampleRate: sampleRate,
+                                     slotIOIMs: gridSlotMs)
 
         let onsets = detector.detect(in: samples)
         var lastOnset = 0.0
@@ -248,7 +252,7 @@ enum RCCLI {
         mean (bias):  \(String(format: "%+.2f ms  (%+.1f%% of grid IOI)", s.meanMs, s.meanMs / slotMs * 100))
         sd (stability): \(String(format: "%.2f ms  (%.1f%% of grid IOI)", s.sdMs, s.sdMs / slotMs * 100))
         min/max:      \(String(format: "%+.2f / %+.2f ms", s.minMs, s.maxMs))
-        in ±15 ms:    \(String(format: "%.0f%%", s.pctInTolerance))
+        in ±\(String(format: "%.0f", s.toleranceMs)) ms:    \(String(format: "%.0f%%", s.pctInTolerance))
         drift:        \(String(format: "%+.2f ms/min", s.driftMsPerMin))
         lag-1 autocorr: \(String(format: "%+.2f", s.lag1))
         \(ratingLine)

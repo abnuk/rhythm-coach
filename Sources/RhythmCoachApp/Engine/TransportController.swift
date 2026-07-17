@@ -66,7 +66,33 @@ final class TransportController {
     var monitorGain: Double = 0.8 {
         didSet { engine.context?.setMonitorGain(monitorEnabled ? Float(monitorGain) : 0) }
     }
-    var toleranceMs: Double = 15
+    /// nil = Custom (manual ms picker).
+    var targetLevel: TargetLevel? = TransportController.loadTargetLevel() {
+        didSet { UserDefaults.standard.set(targetLevel?.rawValue ?? "custom", forKey: "targetLevel") }
+    }
+    var customToleranceMs: Double = TransportController.loadCustomToleranceMs() {
+        didSet { UserDefaults.standard.set(customToleranceMs, forKey: "customToleranceMs") }
+    }
+    /// Tolerance snapshotted for the running take — the accumulator is fixed
+    /// at start(), so live views must not follow bpm/level changes mid-take.
+    private var runToleranceMs: Double?
+
+    var toleranceMs: Double {
+        if let runToleranceMs { return runToleranceMs }
+        guard let targetLevel else { return customToleranceMs }
+        return targetLevel.windowMs(slotIOIMs: TimingRating.slotIOIMs(bpm: bpm, subdivision: subdivision))
+    }
+
+    private static func loadTargetLevel() -> TargetLevel? {
+        guard let raw = UserDefaults.standard.string(forKey: "targetLevel") else { return .advanced }
+        return TargetLevel(rawValue: raw)
+    }
+
+    private static func loadCustomToleranceMs() -> Double {
+        let stored = UserDefaults.standard.double(forKey: "customToleranceMs")
+        return stored > 0 ? stored : 15
+    }
+
     var recordAudio = true
 
     // MARK: Latency
@@ -203,6 +229,7 @@ final class TransportController {
 
             let grid = ClickGrid(spec: gridSpec(), sampleRate: sampleRate)
             currentGrid = grid
+            runToleranceMs = toleranceMs
             let model = latencyModel
             latencySource = model.usesCalibration ? "calibrated" : "reported"
 
@@ -241,6 +268,7 @@ final class TransportController {
             }
         } catch {
             lastError = "\(error)"
+            runToleranceMs = nil
             engine.stop()
         }
     }
@@ -283,6 +311,7 @@ final class TransportController {
             latencyCompMs: latencyModel.netCompensationMs(sampleRate: sampleRate),
             latencySource: latencySource,
             toleranceMs: toleranceMs,
+            targetLevel: targetLevel?.rawValue,
             audioPath: result.recordingURL?.path,
             hitCount: final.hitCount,
             missedCount: final.missedCount,
@@ -312,6 +341,7 @@ final class TransportController {
             try? FileManager.default.removeItem(at: url)
         }
         sessionStart = nil
+        runToleranceMs = nil
         // Resume standalone monitoring if the user keeps it enabled.
         updateIdleMonitoring()
     }

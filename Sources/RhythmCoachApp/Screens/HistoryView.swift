@@ -142,8 +142,8 @@ struct SessionDetailView: View {
                     Text("\(session.subtitle) · \(Int(session.durationSec)) s · \(session.inputDeviceName)")
                         .foregroundStyle(.secondary)
                     Text(String(
-                        format: "latency comp %.2f ms (%@) · tolerance ±%d ms",
-                        session.latencyCompMs, session.latencySource, Int(session.toleranceMs)
+                        format: "latency comp %.2f ms (%@) · %@",
+                        session.latencyCompMs, session.latencySource, session.targetDescription
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
