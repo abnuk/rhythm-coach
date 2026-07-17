@@ -344,62 +344,60 @@ private struct LiveRollingChartsView: View {
     }
 }
 
-/// Session title above the Start button: "Untitled" until renamed. The text
-/// itself is read-only — the pencil switches to a TextField (Enter/click-away
-/// commits, Esc cancels) and the chosen name persists as the default for the
-/// next launch. "Untitled"/empty keeps sessions stored unnamed, so history
-/// falls back to date + metadata.
+/// Session title above the Start button — the native macOS inline-edit
+/// pattern: a borderless text field styled as a label. Click puts the cursor
+/// in place, hover hints editability, Enter/click-away commits, Esc reverts.
+/// Empty shows the "Untitled" prompt and keeps sessions stored unnamed, so
+/// history falls back to date + metadata; a custom name persists as the
+/// default for the next launch.
 private struct SessionNameField: View {
     @Environment(TransportController.self) private var transport
     @State private var draft = ""
-    @State private var isEditing = false
+    @State private var hovering = false
     @FocusState private var focused: Bool
 
     private static let placeholder = "Untitled"
 
     var body: some View {
-        HStack(spacing: 8) {
-            if isEditing {
-                TextField(Self.placeholder, text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.title2.weight(.semibold))
-                    .focused($focused)
-                    .onAppear {
-                        // Same-turn focus on a just-inserted field is dropped;
-                        // defer one runloop turn.
-                        DispatchQueue.main.async { focused = true }
-                    }
-                    .onSubmit { commit() }
-                    .onExitCommand {
-                        isEditing = false
-                        focused = false
-                    }
-                    .onChange(of: focused) { _, isFocused in
-                        if !isFocused, isEditing { commit() }
-                    }
-            } else {
-                Text(transport.sessionName.isEmpty ? Self.placeholder : transport.sessionName)
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(1)
-                Button {
+        HStack {
+            TextField(Self.placeholder, text: $draft)
+                .textFieldStyle(.plain)
+                .font(.title2.weight(.semibold))
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(hovering || focused ? Color.primary.opacity(0.07) : .clear)
+                )
+                .onHover { hovering = $0 }
+                .focused($focused)
+                .onAppear {
                     draft = transport.sessionName
-                    isEditing = true
-                } label: {
-                    Image(systemName: "pencil")
-                        .foregroundStyle(.secondary)
+                    // The window hands initial focus to its first focusable
+                    // control — this field. Give it back so Space keeps
+                    // driving Start/Stop until the user clicks the title.
+                    DispatchQueue.main.async { focused = false }
                 }
-                .buttonStyle(.plain)
-                .help("Rename session")
-                Spacer()
-            }
+                .onSubmit { focused = false }
+                .onExitCommand {
+                    draft = transport.sessionName
+                    focused = false
+                }
+                .onChange(of: focused) { _, isFocused in
+                    if !isFocused { commit() }
+                }
+                .onChange(of: transport.sessionName) { _, newValue in
+                    if !focused { draft = newValue }
+                }
+            Spacer()
         }
     }
 
     private func commit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         transport.sessionName = trimmed == Self.placeholder ? "" : trimmed
-        isEditing = false
-        focused = false
+        draft = transport.sessionName
     }
 }
 
