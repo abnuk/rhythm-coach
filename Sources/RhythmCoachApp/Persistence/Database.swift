@@ -38,6 +38,10 @@ struct SessionRecord: Identifiable, Sendable, Hashable {
     /// nil for sessions recorded before these columns existed.
     var beatsPerBar: Int? = nil
     var countInBars: Int? = nil
+    /// User-given name; nil = unnamed (never an empty string).
+    var name: String? = nil
+    /// nil for sessions recorded before this column existed.
+    var expectEverySlot: Bool? = nil
 }
 
 struct HitRow: Sendable {
@@ -109,6 +113,8 @@ final class Database {
         addColumnIfMissing(table: "session", column: "countInBars", ddl: "INTEGER")
         addColumnIfMissing(table: "session", column: "clickMixPath", ddl: "TEXT")
         addColumnIfMissing(table: "session", column: "targetLevel", ddl: "TEXT")
+        addColumnIfMissing(table: "session", column: "name", ddl: "TEXT")
+        addColumnIfMissing(table: "session", column: "expectEverySlot", ddl: "INTEGER")
         // Older databases keyed calibration only on (inputUID, outputUID,
         // sampleRate, bufferFrames). SQLite cannot extend a primary key in
         // place, so rebuild once, carrying old rows over as channel 0 /
@@ -167,8 +173,8 @@ final class Database {
           latencyCompMs, latencySource, toleranceMs, audioPath,
           hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
           pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar, countInBars,
-          clickMixPath, targetLevel
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          clickMixPath, targetLevel, name, expectEverySlot
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, session.id)
@@ -200,6 +206,8 @@ final class Database {
         bindInt(stmt, 27, session.countInBars)
         bindText(stmt, 28, session.clickMixPath)
         bindText(stmt, 29, session.targetLevel)
+        bindText(stmt, 30, session.name)
+        bindInt(stmt, 31, session.expectEverySlot.map { $0 ? 1 : 0 })
         sqlite3_step(stmt)
 
         var hitStmt: OpaquePointer?
@@ -227,7 +235,7 @@ final class Database {
                latencyCompMs, latencySource, toleranceMs, audioPath,
                hitCount, missedCount, extraCount, meanMs, sdMs, minMs, maxMs,
                pctInTolerance, driftMsPerMin, lag1, clickDensity, beatsPerBar,
-               countInBars, clickMixPath, targetLevel
+               countInBars, clickMixPath, targetLevel, name, expectEverySlot
         FROM session ORDER BY startedAt DESC
         """, -1, &stmt, nil)
         defer { sqlite3_finalize(stmt) }
@@ -262,7 +270,9 @@ final class Database {
                 driftMsPerMin: sqlite3_column_double(stmt, 22),
                 lag1: sqlite3_column_double(stmt, 23),
                 beatsPerBar: intOrNil(stmt, 25),
-                countInBars: intOrNil(stmt, 26)
+                countInBars: intOrNil(stmt, 26),
+                name: text(stmt, 29),
+                expectEverySlot: intOrNil(stmt, 30).map { $0 != 0 }
             ))
         }
         return result
@@ -300,6 +310,16 @@ final class Database {
         bindText(stmt, 1, id)
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
+    }
+
+    /// nil clears the name (unnamed sessions display their metadata instead).
+    func updateSessionName(id: String, name: String?) {
+        var stmt: OpaquePointer?
+        sqlite3_prepare_v2(db, "UPDATE session SET name = ? WHERE id = ?", -1, &stmt, nil)
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, name)
+        bindText(stmt, 2, id)
+        sqlite3_step(stmt)
     }
 
     /// Repoints a session's audio files after the post-session AAC encode

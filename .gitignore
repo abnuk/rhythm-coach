@@ -6,3 +6,4 @@ dist/
 Tools/tuning-bench/recordings/
 Tools/tuning-bench/.venv/
 .DS_Store
+.claude/worktrees/

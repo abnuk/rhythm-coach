@@ -10,6 +10,7 @@ struct PracticeView: View {
             controls
                 .frame(minWidth: 290, maxWidth: 340)
             VStack(spacing: 12) {
+                SessionNameField()
                 header
                 statsRow
                 DeviationScatterView(
@@ -17,6 +18,12 @@ struct PracticeView: View {
                     toleranceMs: transport.toleranceMs
                 )
                 .frame(minHeight: 120)
+                LiveRollingChartsView(
+                    hits: transport.liveHits,
+                    sampleRate: transport.sampleRate,
+                    slotIOIMs: liveSlotIOIMs
+                )
+                .frame(minHeight: 130)
                 HistogramView(histogram: transport.snapshot.histogram, toleranceMs: transport.toleranceMs)
                     .frame(height: 110)
                 if transport.isEncodingTake {
@@ -283,6 +290,96 @@ struct PracticeView: View {
         if abs(drift) < 5 { return "steady" }
         return drift > 0 ? "slowing down" : "rushing"
     }
+
+    /// The running session's grid interval; between sessions, what the
+    /// current settings would produce.
+    private var liveSlotIOIMs: Double {
+        let fromSession = transport.snapshot.slotIOIMs
+        guard fromSession > 0 else {
+            return TimingRating.slotIOIMs(bpm: transport.bpm, subdivision: transport.subdivision)
+        }
+        return fromSession
+    }
+}
+
+/// Live rolling mean/SD charts. A separate child view over plain values so
+/// the 50 ms snapshot poll doesn't re-render the Charts — `liveHits` is
+/// reassigned only when a hit lands, and this is the perf boundary.
+private struct LiveRollingChartsView: View {
+    let hits: [Hit]
+    let sampleRate: Double
+    let slotIOIMs: Double
+
+    var body: some View {
+        let recent = hits.suffix(600)
+        let points = sampleRate > 0
+            ? RollingStats.windowedSD(
+                timesSec: recent.map { $0.onsetSample / sampleRate },
+                deviationsMs: recent.map(\.deviationMs)
+            )
+            : []
+        HStack(spacing: 12) {
+            if points.isEmpty || slotIOIMs <= 0 {
+                Text("Rolling mean/SD charts appear after \(RollingStats.windowHits) hits")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                labeledChart(.mean, "Bias — mean of last \(RollingStats.windowHits)", points)
+                labeledChart(.sd, "Stability — SD of last \(RollingStats.windowHits)", points)
+            }
+        }
+    }
+
+    private func labeledChart(_ metric: RollingMetric, _ title: String,
+                              _ points: [RollingPoint]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            RollingStatChart(points: points, slotIOIMs: slotIOIMs, metric: metric)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Session-name field above the Start button. `draft` mirrors the custom
+/// name, or the live auto name (date + tempo + grid) when none is set; while
+/// focused the mirror is frozen so the ticking clock cannot stomp typing.
+/// Committing an empty or unchanged auto text returns to auto mode — the
+/// session is then stored unnamed and history shows its metadata.
+private struct SessionNameField: View {
+    @Environment(TransportController.self) private var transport
+    @State private var draft = ""
+    @State private var autoAtFocus: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let display = transport.sessionName.isEmpty ? transport.autoSessionName : transport.sessionName
+        TextField("Session name", text: $draft)
+            .textFieldStyle(.roundedBorder)
+            .focused($focused)
+            .onAppear { draft = display }
+            .onChange(of: display) { _, newValue in
+                if !focused { draft = newValue }
+            }
+            .onChange(of: focused) { _, isFocused in
+                if isFocused {
+                    autoAtFocus = transport.sessionName.isEmpty ? draft : nil
+                } else {
+                    commit()
+                }
+            }
+            .onSubmit { commit() }
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        transport.sessionName = (trimmed.isEmpty || trimmed == autoAtFocus) ? "" : trimmed
+        autoAtFocus = nil
+        draft = transport.sessionName.isEmpty ? transport.autoSessionName : transport.sessionName
+    }
 }
 
 struct StatBox: View {
@@ -439,6 +536,7 @@ extension SessionRecord {
         }
         if let gap = gapPattern { parts.append("gap \(gap)") }
         if targetOffsetMs != 0 { parts.append(String(format: "target %+d ms", Int(targetOffsetMs))) }
+        if expectEverySlot == false { parts.append("rests allowed") }
         return parts.joined(separator: " · ")
     }
 }
