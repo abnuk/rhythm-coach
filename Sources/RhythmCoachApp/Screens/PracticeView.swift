@@ -3,6 +3,9 @@ import SwiftUI
 
 struct PracticeView: View {
     @Environment(TransportController.self) private var transport
+    /// Shared with the "Last take" waveform and the stat charts so one playhead
+    /// clock drives every synchronized position marker.
+    @State private var playback = WaveformPlaybackController()
 
     var body: some View {
         @Bindable var transport = transport
@@ -15,14 +18,20 @@ struct PracticeView: View {
                 statsRow
                 DeviationScatterView(
                     hits: transport.liveHits,
-                    toleranceMs: transport.toleranceMs
+                    toleranceMs: transport.toleranceMs,
+                    playback: playback,
+                    sampleRate: transport.sampleRate,
+                    latencyCompMs: transport.lastSession?.latencyCompMs ?? 0,
+                    windowToRecent: transport.isRunning
                 )
                 .frame(minHeight: 120)
                 LiveRollingChartsView(
                     hits: transport.liveHits,
                     sampleRate: transport.sampleRate,
                     slotIOIMs: liveSlotIOIMs,
-                    isRunning: transport.isRunning
+                    isRunning: transport.isRunning,
+                    playback: playback,
+                    latencyCompMs: transport.lastSession?.latencyCompMs ?? 0
                 )
                 .frame(minHeight: 130)
                 HistogramView(histogram: transport.snapshot.histogram, toleranceMs: transport.toleranceMs)
@@ -41,7 +50,8 @@ struct PracticeView: View {
                             audioURL: URL(fileURLWithPath: path),
                             mixURL: session.clickMixPath.map { URL(fileURLWithPath: $0) },
                             grid: WaveformGridParams(record: session),
-                            hits: WaveformHitMarker.markers(hits: transport.lastSessionHits, record: session)
+                            hits: WaveformHitMarker.markers(hits: transport.lastSessionHits, record: session),
+                            playback: playback
                         )
                         .frame(minHeight: 200, idealHeight: 240)
                     }
@@ -322,6 +332,9 @@ private struct LiveRollingChartsView: View {
     let sampleRate: Double
     let slotIOIMs: Double
     let isRunning: Bool
+    /// Playback clock + take latency for the synchronized position cursor.
+    var playback: WaveformPlaybackController? = nil
+    var latencyCompMs: Double = 0
 
     /// Live window width, in grid slots — matches the hits scatter's
     /// `suffix(200)` so both live charts scroll over the same recent span.
@@ -377,7 +390,8 @@ private struct LiveRollingChartsView: View {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-            RollingStatChart(points: points, slotIOIMs: slotIOIMs, metric: metric, xDomain: xDomain)
+            RollingStatChart(points: points, slotIOIMs: slotIOIMs, metric: metric,
+                             xDomain: xDomain, playback: playback, latencyCompMs: latencyCompMs)
         }
         .frame(maxWidth: .infinity)
     }
@@ -470,6 +484,15 @@ struct StatBox: View {
 struct DeviationScatterView: View {
     let hits: [Hit]
     let toleranceMs: Double
+    /// When set, a synchronized playback cursor is drawn. Read only inside the
+    /// `ScatterTimeCursor` leaf so the Canvas stays static at tick rate.
+    var playback: WaveformPlaybackController? = nil
+    var sampleRate: Double = 0
+    var latencyCompMs: Double = 0
+    /// Live view shows only the recent 200 hits (a readable rolling window);
+    /// review/playback shows the whole take so the synchronized position
+    /// marker is meaningful across the entire recording.
+    var windowToRecent: Bool = true
     /// Y-range: ±50 ms, widened (to the next 10) when the tolerance band
     /// would not fit — e.g. Beginner windows reach ±60 ms.
     private var rangeMs: Double {
@@ -504,7 +527,7 @@ struct DeviationScatterView: View {
                 )
             }
 
-            let visible = hits.suffix(200)
+            let visible = windowToRecent ? hits.suffix(200) : hits[...]
             guard !visible.isEmpty else {
                 return
             }
@@ -522,6 +545,13 @@ struct DeviationScatterView: View {
             }
         }
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if let playback {
+                ScatterTimeCursor(hits: hits, playback: playback,
+                                  sampleRate: sampleRate, latencyCompMs: latencyCompMs,
+                                  windowToRecent: windowToRecent)
+            }
+        }
         .overlay(alignment: .topLeading) {
             Text("← early · +\(Int(rangeMs)) ms")
                 .font(.caption2)
@@ -534,6 +564,61 @@ struct DeviationScatterView: View {
                 .foregroundStyle(.secondary)
                 .padding(6)
         }
+    }
+}
+
+/// Thin playback cursor over the deviation scatter. The scatter's X axis is
+/// hit *order* (`hits.suffix(200)`), not time, so the playhead time is mapped
+/// to a fractional index by interpolating between neighbouring hits' onsets —
+/// matching the Canvas's `stepX` layout exactly. Only this leaf reads
+/// `currentTime`, so the Canvas isn't redrawn at tick rate.
+private struct ScatterTimeCursor: View {
+    let hits: [Hit]
+    let playback: WaveformPlaybackController
+    let sampleRate: Double
+    let latencyCompMs: Double
+    let windowToRecent: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            // Read `currentTime` unconditionally so 60 Hz ticks always
+            // re-render this leaf (as `ChartTimeCursor` does); a read buried
+            // inside a short-circuited `if` wouldn't register the dependency.
+            let cursorSec = playback.currentTime - latencyCompMs / 1000
+            ZStack(alignment: .leading) {
+                if playback.isAvailable, sampleRate > 0,
+                   let x = cursorX(cursorSec: cursorSec, width: geo.size.width) {
+                    Rectangle()
+                        .fill(.red.opacity(0.9))
+                        .frame(width: 1.5)
+                        .offset(x: x)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// Fractional hit index → x, using the same `stepX` and windowing as
+    /// `DeviationScatterView`'s Canvas. Hidden before the first / after the
+    /// last shown hit.
+    private func cursorX(cursorSec: Double, width: CGFloat) -> CGFloat? {
+        let visible = windowToRecent ? hits.suffix(200) : hits[...]
+        guard !visible.isEmpty else { return nil }
+        let times = visible.map { $0.onsetSample / sampleRate }
+        guard let firstT = times.first, let lastT = times.last,
+              cursorSec >= firstT, cursorSec <= lastT else { return nil }
+        var frac = 0.0
+        if times.count > 1 {
+            var i = 0
+            while i < times.count - 1 && times[i + 1] < cursorSec { i += 1 }
+            let t0 = times[i]
+            let t1 = times[i + 1]
+            let span = t1 - t0
+            frac = Double(i) + (span > 0 ? (cursorSec - t0) / span : 0)
+        }
+        let stepX = width / CGFloat(max(visible.count, 40))
+        return CGFloat(frac) * stepX + stepX / 2
     }
 }
 

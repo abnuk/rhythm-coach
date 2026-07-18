@@ -172,6 +172,9 @@ struct SessionDetailView: View {
     var displayName: String? = nil
     @State private var hits: [HitRow] = []
     @State private var exportError: String?
+    /// Shared by the waveform and the stat charts so one playhead clock drives
+    /// every synchronized position marker.
+    @State private var playback = WaveformPlaybackController()
 
     var body: some View {
         ScrollView {
@@ -224,7 +227,10 @@ struct SessionDetailView: View {
                 if !hits.isEmpty {
                     let data = SessionChartData(session: session, rows: hits)
                     Text("Deviation timeline").font(.headline)
-                    DeviationScatterView(hits: data.hits, toleranceMs: session.toleranceMs)
+                    DeviationScatterView(hits: data.hits, toleranceMs: session.toleranceMs,
+                                         playback: playback, sampleRate: session.sampleRate,
+                                         latencyCompMs: session.latencyCompMs,
+                                         windowToRecent: false)
                         .frame(height: 180)
 
                     if !data.rollingPoints.isEmpty && session.slotIOIMs > 0 {
@@ -232,14 +238,18 @@ struct SessionDetailView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Bias over time (mean of last \(RollingStats.windowHits) hits)")
                                     .font(.headline)
-                                RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs, metric: .mean)
+                                RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs,
+                                                 metric: .mean, playback: playback,
+                                                 latencyCompMs: session.latencyCompMs)
                                     .frame(height: 160)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Stability over time (SD of last \(RollingStats.windowHits) hits)")
                                     .font(.headline)
-                                RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs, metric: .sd)
+                                RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs,
+                                                 metric: .sd, playback: playback,
+                                                 latencyCompMs: session.latencyCompMs)
                                     .frame(height: 160)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,7 +271,8 @@ struct SessionDetailView: View {
                             audioURL: URL(fileURLWithPath: path),
                             mixURL: mixPath.map { URL(fileURLWithPath: $0) },
                             grid: WaveformGridParams(record: session),
-                            hits: WaveformHitMarker.markers(rows: hits, record: session)
+                            hits: WaveformHitMarker.markers(rows: hits, record: session),
+                            playback: playback
                         )
                         .frame(height: 260)
                         HStack {
@@ -282,6 +293,10 @@ struct SessionDetailView: View {
             .padding()
         }
         .task(id: session.id) {
+            // Switching sessions must halt any in-progress playback, even when
+            // the new session has no audio (the waveform view won't appear to
+            // stop it via .onDisappear).
+            playback.stop()
             hits = Database.shared.hits(sessionID: session.id)
         }
     }

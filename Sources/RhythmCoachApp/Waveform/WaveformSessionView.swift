@@ -80,6 +80,9 @@ struct WaveformSessionView: View {
     let mixURL: URL?
     let grid: WaveformGridParams
     let hits: [WaveformHitMarker]
+    /// Owned by the host screen so the same playhead clock drives the
+    /// synchronized position markers on the sibling stat charts.
+    let playback: WaveformPlaybackController
 
     private enum Phase {
         case loading
@@ -89,14 +92,15 @@ struct WaveformSessionView: View {
 
     @State private var phase: Phase = .loading
     @State private var viewport = WaveformViewport()
-    @State private var playback = WaveformPlaybackController()
     @State private var playMix = false
 
-    init(audioURL: URL, mixURL: URL? = nil, grid: WaveformGridParams, hits: [WaveformHitMarker]) {
+    init(audioURL: URL, mixURL: URL? = nil, grid: WaveformGridParams,
+         hits: [WaveformHitMarker], playback: WaveformPlaybackController) {
         self.audioURL = audioURL
         self.mixURL = mixURL
         self.grid = grid
         self.hits = hits.sorted { $0.onsetWavSample < $1.onsetWavSample }
+        self.playback = playback
     }
 
     var body: some View {

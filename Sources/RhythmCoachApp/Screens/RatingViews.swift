@@ -70,6 +70,13 @@ struct RollingStatChart: View {
     /// Fixed X range (session seconds) for the live scrolling window; `nil`
     /// auto-fits to the data, so the whole take shows (History / report).
     var xDomain: ClosedRange<Double>? = nil
+    /// When set, a synchronized playback cursor is drawn at the current
+    /// playhead. Read only inside the `ChartTimeCursor` leaf, never in this
+    /// view's body, so 60 Hz ticks don't re-run the `Chart` builder.
+    var playback: WaveformPlaybackController? = nil
+    /// Latency compensation of the take, to map the raw-audio playhead onto
+    /// this chart's compensated `timeSec` axis.
+    var latencyCompMs: Double = 0
 
     var body: some View {
         let thresholds: TierThresholds = metric == .sd ? .stability : .accuracy
@@ -135,6 +142,14 @@ struct RollingStatChart: View {
         }()
         return chart
             .chartXScale(domain: xRange)
+            .chartOverlay { proxy in
+                Group {
+                    if let playback {
+                        ChartTimeCursor(proxy: proxy, playback: playback,
+                                        latencyCompMs: latencyCompMs)
+                    }
+                }
+            }
             .overlay(alignment: .bottomTrailing) {
             // Bottom corner: the top-trailing spot belongs to the Y-axis label.
             Text(String(
@@ -172,6 +187,33 @@ struct RollingStatChart: View {
 
     private static func timeLabel(_ seconds: Double) -> String {
         String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+    }
+}
+
+/// Thin playback cursor over a time-axis chart. This leaf is the only reader
+/// of `playback.currentTime`, so 60 Hz ticks invalidate just it — never the
+/// parent `Chart` builder. Mirrors `WaveformPlayheadOverlay` for the waveform.
+private struct ChartTimeCursor: View {
+    let proxy: ChartProxy
+    let playback: WaveformPlaybackController
+    let latencyCompMs: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            // The playhead runs on the raw-audio timeline; the chart's X axis
+            // is latency-compensated (`onsetSample / sampleRate`), so shift.
+            let cursorSec = playback.currentTime - latencyCompMs / 1000
+            if playback.isAvailable, let plotFrame = proxy.plotFrame {
+                let rect = geo[plotFrame]
+                if let dx = proxy.position(forX: cursorSec), dx >= 0, dx <= rect.width {
+                    Rectangle()
+                        .fill(.red.opacity(0.9))
+                        .frame(width: 1.5, height: rect.height)
+                        .position(x: rect.minX + dx, y: rect.midY)
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
