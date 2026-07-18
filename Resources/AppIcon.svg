@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B2A4A"/>
+      <stop offset="0.55" stop-color="#0E7C86"/>
+      <stop offset="1" stop-color="#2DD4BF"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.32" cy="0.24" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="vignette" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.7" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
+    </linearGradient>
+    <linearGradient id="pickFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E7ECF1"/>
+    </linearGradient>
+    <linearGradient id="barFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+    <filter id="pickShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="16"/>
+      <feOffset dy="14" result="off"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.35"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="192" ry="192" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="192" ry="192" fill="url(#gloss)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="192" ry="192" fill="url(#vignette)"/>
+
+  <g filter="url(#pickShadow)">
+    <path d="M 534.3 301.5 Q 635.6 463.6 673.6 635.1 Q 714.0 732.0 609.0 732.0 Q 512.0 752.0 415.0 732.0 Q 310.0 732.0 350.4 635.1 Q 388.4 463.6 489.7 301.5 Q 512.0 248.0 534.3 301.5 Z"
+          fill="url(#pickFill)"/>
+  </g>
+
+  <g>
+    <rect x="371" y="475" width="34" height="90"  rx="17" fill="url(#barFill)"/>
+    <rect x="433" y="430" width="34" height="180" rx="17" fill="url(#barFill)"/>
+    <rect x="495" y="405" width="34" height="230" rx="17" fill="url(#barFill)"/>
+    <rect x="557" y="445" width="34" height="150" rx="17" fill="url(#barFill)"/>
+    <rect x="619" y="465" width="34" height="110" rx="17" fill="url(#barFill)"/>
+  </g>
+</svg>
