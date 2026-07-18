@@ -138,6 +138,18 @@ struct WaveformSessionView: View {
             }
             .disabled(!playback.isAvailable)
             PlaybackTimeReadout(playback: playback)
+            Picker("Playback speed", selection: Binding(
+                get: { playback.rate },
+                set: { playback.rate = $0 }
+            )) {
+                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { r in
+                    Text(String(format: "%g×", r)).tag(r)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(!playback.isAvailable)
             if let mixURL {
                 Picker("Playback source", selection: $playMix) {
                     Text("Input").tag(false)

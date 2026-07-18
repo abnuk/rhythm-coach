@@ -15,6 +15,17 @@ final class WaveformPlaybackController {
     /// but pausing must leave it fully static.
     private(set) var currentTime: TimeInterval = 0
     private(set) var duration: TimeInterval = 0
+    /// YouTube-style playback speed. `AVAudioPlayer.rate` time-stretches while
+    /// preserving pitch (no chipmunk), so a slowed take stays in tune. Restored
+    /// from and written back to UserDefaults; re-applied to every fresh player
+    /// in `load()`. Range matches the supported presets (0.5–2.0).
+    var rate: Double = (UserDefaults.standard.object(forKey: "ui.playbackRate") as? Double ?? 1.0)
+        .clamped(to: 0.5...2.0) {
+        didSet {
+            UserDefaults.standard.set(rate, forKey: "ui.playbackRate")
+            player?.rate = Float(rate)   // live-apply while playing or paused
+        }
+    }
     var isAvailable: Bool { player != nil }
 
     @ObservationIgnored private var player: AVAudioPlayer?
@@ -23,7 +34,9 @@ final class WaveformPlaybackController {
     func load(url: URL) {
         stop()
         player = try? AVAudioPlayer(contentsOf: url)
+        player?.enableRate = true   // must be set before prepareToPlay()
         player?.prepareToPlay()
+        player?.rate = Float(rate)
         duration = player?.duration ?? 0
     }
 
