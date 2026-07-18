@@ -67,6 +67,9 @@ struct RollingStatChart: View {
     let points: [RollingPoint]
     let slotIOIMs: Double
     let metric: RollingMetric
+    /// Fixed X range (session seconds) for the live scrolling window; `nil`
+    /// auto-fits to the data, so the whole take shows (History / report).
+    var xDomain: ClosedRange<Double>? = nil
 
     var body: some View {
         let thresholds: TierThresholds = metric == .sd ? .stability : .accuracy
@@ -78,7 +81,7 @@ struct RollingStatChart: View {
         let yMax = max(maxAbs * 1.15, fairMs * 1.25)
         let yMin = metric == .sd ? 0 : -yMax
         let bands = tierBands(proMs: proMs, goodMs: goodMs, fairMs: fairMs, yMax: yMax)
-        Chart {
+        let chart = Chart {
             ForEach(bands.indices, id: \.self) { i in
                 RectangleMark(
                     yStart: .value("Band", bands[i].from),
@@ -121,7 +124,18 @@ struct RollingStatChart: View {
                 }
             }
         }
-        .overlay(alignment: .bottomTrailing) {
+        // Explicit X domain: live passes a fixed sliding window; otherwise fit
+        // tight to the data so the whole-take view ends exactly at the last
+        // point. (Charts' auto-fit pads out to the next round tick, leaving dead
+        // space on the right.) Points are time-ordered, so first/last are ends.
+        let xRange = xDomain ?? {
+            let lo = points.first?.timeSec ?? 0
+            let hi = points.last?.timeSec ?? 1
+            return lo...(hi > lo ? hi : lo + 1)
+        }()
+        return chart
+            .chartXScale(domain: xRange)
+            .overlay(alignment: .bottomTrailing) {
             // Bottom corner: the top-trailing spot belongs to the Y-axis label.
             Text(String(
                 format: metric == .sd

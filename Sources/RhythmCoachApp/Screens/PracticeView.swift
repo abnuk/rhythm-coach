@@ -21,7 +21,8 @@ struct PracticeView: View {
                 LiveRollingChartsView(
                     hits: transport.liveHits,
                     sampleRate: transport.sampleRate,
-                    slotIOIMs: liveSlotIOIMs
+                    slotIOIMs: liveSlotIOIMs,
+                    isRunning: transport.isRunning
                 )
                 .frame(minHeight: 130)
                 HistogramView(histogram: transport.snapshot.histogram, toleranceMs: transport.toleranceMs)
@@ -232,18 +233,20 @@ struct PracticeView: View {
         // and history. Never mix the two metrics in one tile.
         let showRolling = transport.isRunning && stats.rollingSdMs != nil
         let sdShown = showRolling ? (stats.rollingSdMs ?? stats.sdMs) : stats.sdMs
+        let meanShown = showRolling ? (stats.rollingMeanMs ?? stats.meanMs) : stats.meanMs
         let stabilityTier: TimingTier? = canRate
             ? TierThresholds.stability.tier(forAbsMs: sdShown, slotIOIMs: stats.slotIOIMs)
             : nil
         let accuracyTier: TimingTier? = canRate
-            ? TierThresholds.accuracy.tier(forAbsMs: abs(stats.meanMs), slotIOIMs: stats.slotIOIMs)
+            ? TierThresholds.accuracy.tier(forAbsMs: abs(meanShown), slotIOIMs: stats.slotIOIMs)
             : nil
         return HStack(spacing: 12) {
             StatBox(
-                title: "MEAN (bias)",
-                value: String(format: "%+.1f ms", stats.meanMs),
-                detail: accuracyTier.map { "\($0.label) · \(biasLabel(stats.meanMs))" }
-                    ?? biasLabel(stats.meanMs),
+                title: showRolling
+                    ? "MEAN (last \(min(stats.hitCount, RollingStats.windowHits)))"
+                    : "MEAN (bias)",
+                value: String(format: "%+.1f ms", meanShown),
+                detail: biasDetail(stats, tier: accuracyTier, meanShown: meanShown, showRolling: showRolling),
                 color: accuracyTier?.color ?? .primary
             )
             StatBox(
@@ -286,6 +289,15 @@ struct PracticeView: View {
         return String(format: "%@ · session %.1f ms", tier.label, stats.sdMs)
     }
 
+    /// Mirror of `stabilityDetail` for the bias tile: whole-session keeps the
+    /// human bias label; while rolling, show the session mean small like SD.
+    private func biasDetail(_ stats: LiveStatsSnapshot, tier: TimingTier?,
+                            meanShown: Double, showRolling: Bool) -> String {
+        guard let tier else { return biasLabel(meanShown) }
+        guard showRolling else { return "\(tier.label) · \(biasLabel(meanShown))" }
+        return String(format: "%@ · session %+.1f ms", tier.label, stats.meanMs)
+    }
+
     private func driftLabel(_ drift: Double) -> String {
         if abs(drift) < 5 { return "steady" }
         return drift > 0 ? "slowing down" : "rushing"
@@ -309,39 +321,63 @@ private struct LiveRollingChartsView: View {
     let hits: [Hit]
     let sampleRate: Double
     let slotIOIMs: Double
+    let isRunning: Bool
+
+    /// Live window width, in grid slots — matches the hits scatter's
+    /// `suffix(200)` so both live charts scroll over the same recent span.
+    private static let liveWindowHits = 200
 
     var body: some View {
-        // Window over the whole session, not a trailing slice — a suffix cap
-        // makes the first point's time creep forward once the session outgrows
-        // it, so the chart's X domain (auto-fit, no fixed scale) eats the start
-        // of the recording. History windows over every hit; live must match.
         let points = sampleRate > 0
             ? RollingStats.windowedSD(
                 timesSec: hits.map { $0.onsetSample / sampleRate },
                 deviationsMs: hits.map(\.deviationMs)
             )
             : []
+        // While recording, scroll a *fixed-width* time window pinned to the
+        // newest point. A fixed X domain (not auto-fit to the visible points)
+        // keeps the horizontal scale constant, so the line slides smoothly
+        // instead of the whole plot restretching each hit. After stop, the
+        // window is nil → the chart auto-fits the whole take, like History.
+        let window = liveWindow(points)
+        let visible = window?.points ?? points
         HStack(spacing: 12) {
-            if points.isEmpty || slotIOIMs <= 0 {
+            if visible.isEmpty || slotIOIMs <= 0 {
                 Text("Rolling mean/SD charts appear after \(RollingStats.windowHits) hits")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
             } else {
-                labeledChart(.mean, "Bias — mean of last \(RollingStats.windowHits)", points)
-                labeledChart(.sd, "Stability — SD of last \(RollingStats.windowHits)", points)
+                labeledChart(.mean, "Bias — mean of last \(RollingStats.windowHits)", visible, window?.domain)
+                labeledChart(.sd, "Stability — SD of last \(RollingStats.windowHits)", visible, window?.domain)
             }
         }
     }
 
+    /// The trailing time window shown while recording: a fixed span of
+    /// `liveWindowHits` slots ending at the newest point, plus the points
+    /// inside it. `nil` when stopped (show the whole take) or too few points —
+    /// the domain left edge holds at the first point until the take outgrows
+    /// the span, so early on the chart fills rather than scrolling.
+    private func liveWindow(_ points: [RollingPoint])
+        -> (points: [RollingPoint], domain: ClosedRange<Double>)? {
+        guard isRunning, points.count >= 2, slotIOIMs > 0 else { return nil }
+        let last = points[points.count - 1].timeSec
+        let span = Double(Self.liveWindowHits) * slotIOIMs / 1000
+        let left = max(points[0].timeSec, last - span)
+        guard last > left else { return nil }
+        return (points.filter { $0.timeSec >= left }, left...last)
+    }
+
     private func labeledChart(_ metric: RollingMetric, _ title: String,
-                              _ points: [RollingPoint]) -> some View {
+                              _ points: [RollingPoint],
+                              _ xDomain: ClosedRange<Double>?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-            RollingStatChart(points: points, slotIOIMs: slotIOIMs, metric: metric)
+            RollingStatChart(points: points, slotIOIMs: slotIOIMs, metric: metric, xDomain: xDomain)
         }
         .frame(maxWidth: .infinity)
     }

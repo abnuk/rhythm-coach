@@ -23,6 +23,9 @@ public struct LiveStatsSnapshot: Sendable, Equatable {
     /// Sample SD of the most recent `RollingStats.windowHits` deviations;
     /// nil until `RollingStats.minLiveHits` hits have been scored.
     public var rollingSdMs: Double? = nil
+    /// Signed mean of the most recent `RollingStats.windowHits` deviations;
+    /// nil until `RollingStats.minLiveHits` hits (parallel to `rollingSdMs`).
+    public var rollingMeanMs: Double? = nil
     /// Histogram of deviations, `Histogram.binCount` bins over ±`Histogram.rangeMs`.
     public var histogram: [Int] = Array(repeating: 0, count: Histogram.binCount)
 
@@ -126,6 +129,7 @@ public final class StatsAccumulator {
             rMean /= Double(recent.count)
             var rM2 = 0.0
             for d in recent { rM2 += (d - rMean) * (d - rMean) }
+            s.rollingMeanMs = rMean
             s.rollingSdMs = (rM2 / Double(recent.count - 1)).squareRoot()
         }
 
