@@ -5,7 +5,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-VERSION="${1:-1.1.3}"
+VERSION="${1:-1.1.4}"
 
 ./Scripts/make-app.sh release --universal
 
