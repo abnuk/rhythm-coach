@@ -12,7 +12,7 @@ enum RCCLI {
         let options = parseOptions(Array(arguments.dropFirst()))
         do {
             switch command {
-            case "version": print("rc-cli 1.1.2")
+            case "version": print("rc-cli 1.1.3")
             case "devices": try listDevices()
             case "duplex": try duplexSmoke(options)
             case "calibrate": try calibrate(options)
