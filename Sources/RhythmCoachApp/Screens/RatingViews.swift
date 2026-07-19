@@ -29,6 +29,148 @@ struct TierBadge: View {
     }
 }
 
+// MARK: - Plain-language help
+
+/// A beginner-friendly explanation surfaced from an `InfoButton` popover.
+struct HelpTopic {
+    let title: String
+    let body: String
+}
+
+/// Every stat/chart explanation kept in one place so the wording is easy to
+/// tune. Voice matches `verdictText`: plain, concrete, no jargon — written for
+/// someone who has never heard of "standard deviation".
+enum HelpTopics {
+    static let mean = HelpTopic(
+        title: "Mean — your average timing",
+        body: """
+        On average, are you ahead of or behind the beat? Around 0 ms means you're \
+        right on the grid. A positive number (like +5 ms) means you tend to play a \
+        hair late — just behind the beat. A negative number means early — a bit \
+        ahead. This is your steady lean, not how spread out your notes are.
+        """
+    )
+
+    static let sd = HelpTopic(
+        title: "SD — how steady you are",
+        body: """
+        How consistent your timing is from note to note — your typical wobble around \
+        your own average. Smaller is better. Rule of thumb: about 2 out of 3 of your \
+        notes land within one SD of your average, and about 19 in 20 within twice \
+        that. So SD 15 ms means roughly two-thirds of your notes fall inside a ±15 ms \
+        band, and almost all within ±30 ms. It measures how tight you are, not how \
+        early or late — playing steadily but late still scores a low SD.
+        """
+    )
+
+    static let inTolerance = HelpTopic(
+        title: "In tolerance — notes on target",
+        body: """
+        The share of your notes that landed inside the target window around the \
+        beat. 100% means every note was on target; a lower number means more notes \
+        fell outside the window. "Missed" counts beats you didn't play; "extra" \
+        counts notes that had no beat to match.
+        """
+    )
+
+    static let drift = HelpTopic(
+        title: "Drift — is your tempo slipping?",
+        body: """
+        Whether your tempo drifts as the take goes on. Near 0 means you held steady. \
+        A positive number means you gradually slowed down; a negative number means \
+        you sped up (rushed) toward the end. Measured in milliseconds per minute.
+        """
+    )
+
+    static let minMax = HelpTopic(
+        title: "Min / Max — your extremes",
+        body: """
+        Your single earliest and latest notes in the take, and the total gap between \
+        them. Handy for spotting a one-off slip that your average hides — one wild \
+        note can stretch this range even when the rest were tight.
+        """
+    )
+
+    static let biasChart = HelpTopic(
+        title: "Bias over time",
+        body: """
+        Your early/late lean tracked across the take (the average of your last 16 \
+        hits). The center line is dead on the beat. Watch whether the line drifts \
+        away from center — that's your timing sliding early or late as you play.
+        """
+    )
+
+    static let stabilityChart = HelpTopic(
+        title: "Stability over time",
+        body: """
+        How tight your timing is across the take (the spread of your last 16 hits). \
+        Lower is better. A line creeping up means you're getting less consistent; a \
+        line settling down means you're tightening up.
+        """
+    )
+
+    static let deviationScatter = HelpTopic(
+        title: "Every note, in order",
+        body: """
+        One dot per note, left to right in the order you played them. How high or \
+        low a dot sits shows how far it landed from the beat — orange = early, \
+        purple = late. The green band is the on-target window; dots inside it are \
+        good hits.
+        """
+    )
+
+    static let histogram = HelpTopic(
+        title: "Where your notes cluster",
+        body: """
+        How your notes are spread around the beat. A tall stack in the middle (the \
+        green band) means most notes were on target. Bars leaning to one side show a \
+        habit of playing early (orange, left) or late (purple, right).
+        """
+    )
+
+    static let trendChart = HelpTopic(
+        title: "Your progress over sessions",
+        body: """
+        Your timing across past practice sessions. Blue tracks how steady you were \
+        (SD); orange tracks your early/late lean (mean). Lines heading toward the \
+        center line over time mean you're improving.
+        """
+    )
+}
+
+/// Small ⓘ button that reveals a plain-language explanation in a popover.
+/// Sits next to a stat tile or chart title so a beginner can learn what a number
+/// means without cluttering the layout. Styled to read as a quiet, secondary
+/// affordance (matches the app's gray caption idiom).
+struct InfoButton: View {
+    let topic: HelpTopic
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            showing.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help(topic.title)
+        .popover(isPresented: $showing, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(topic.title)
+                    .font(.headline)
+                Text(topic.body)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(width: 300, alignment: .leading)
+        }
+    }
+}
+
 extension SessionRecord {
     /// Analysis-grid slot interval in ms; 0 when bpm/subdivision are unusable
     /// (rows from before those fields, or an unknown subdivision string).

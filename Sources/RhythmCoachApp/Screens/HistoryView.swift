@@ -120,14 +120,17 @@ struct HistoryView: View {
 
     private var trendChart: some View {
         VStack(spacing: 6) {
-            Picker("Trend units", selection: $trendMode) {
-                ForEach(TrendMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+            HStack(spacing: 6) {
+                Picker("Trend units", selection: $trendMode) {
+                    ForEach(TrendMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 220)
+                InfoButton(topic: HelpTopics.trendChart)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 220)
             Chart {
                 ForEach(trendSessions) { session in
                     LineMark(
@@ -209,24 +212,31 @@ struct SessionDetailView: View {
                     StatBox(title: "MEAN (bias)",
                             value: String(format: "%+.1f ms", session.meanMs),
                             detail: meanDetail,
-                            color: session.rating?.accuracy.color ?? .primary)
+                            color: session.rating?.accuracy.color ?? .primary,
+                            help: HelpTopics.mean)
                     StatBox(title: "SD (stability)",
                             value: String(format: "%.1f ms", session.sdMs),
                             detail: sdDetail,
-                            color: session.rating?.stability.color ?? .primary)
+                            color: session.rating?.stability.color ?? .primary,
+                            help: HelpTopics.sd)
                     StatBox(title: "IN TOLERANCE",
                             value: String(format: "%.0f%%", session.pctInTolerance),
                             detail: "\(session.hitCount) hits · \(session.missedCount) missed · \(session.extraCount) extra",
-                            color: .primary)
+                            color: .primary,
+                            help: HelpTopics.inTolerance)
                     StatBox(title: "DRIFT",
                             value: String(format: "%+.1f ms/min", session.driftMsPerMin),
                             detail: String(format: "lag-1 %+.2f", session.lag1),
-                            color: .primary)
+                            color: .primary,
+                            help: HelpTopics.drift)
                 }
 
                 if !hits.isEmpty {
                     let data = SessionChartData(session: session, rows: hits)
-                    Text("Deviation timeline").font(.headline)
+                    HStack(spacing: 4) {
+                        Text("Deviation timeline").font(.headline)
+                        InfoButton(topic: HelpTopics.deviationScatter)
+                    }
                     DeviationScatterView(hits: data.hits, toleranceMs: session.toleranceMs,
                                          playback: playback, sampleRate: session.sampleRate,
                                          latencyCompMs: session.latencyCompMs,
@@ -236,8 +246,11 @@ struct SessionDetailView: View {
                     if !data.rollingPoints.isEmpty && session.slotIOIMs > 0 {
                         HStack(alignment: .top, spacing: 12) {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Bias over time (mean of last \(RollingStats.windowHits) hits)")
-                                    .font(.headline)
+                                HStack(spacing: 4) {
+                                    Text("Bias over time (mean of last \(RollingStats.windowHits) hits)")
+                                        .font(.headline)
+                                    InfoButton(topic: HelpTopics.biasChart)
+                                }
                                 RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs,
                                                  metric: .mean, playback: playback,
                                                  latencyCompMs: session.latencyCompMs)
@@ -245,8 +258,11 @@ struct SessionDetailView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Stability over time (SD of last \(RollingStats.windowHits) hits)")
-                                    .font(.headline)
+                                HStack(spacing: 4) {
+                                    Text("Stability over time (SD of last \(RollingStats.windowHits) hits)")
+                                        .font(.headline)
+                                    InfoButton(topic: HelpTopics.stabilityChart)
+                                }
                                 RollingStatChart(points: data.rollingPoints, slotIOIMs: session.slotIOIMs,
                                                  metric: .sd, playback: playback,
                                                  latencyCompMs: session.latencyCompMs)
@@ -256,7 +272,10 @@ struct SessionDetailView: View {
                         }
                     }
 
-                    Text("Distribution").font(.headline)
+                    HStack(spacing: 4) {
+                        Text("Distribution").font(.headline)
+                        InfoButton(topic: HelpTopics.histogram)
+                    }
                     HistogramView(histogram: data.histogram, toleranceMs: session.toleranceMs)
                         .frame(height: 100)
                 }
@@ -366,15 +385,18 @@ struct SessionSummarySheet: View {
                         detail: session.rating.map {
                             "\($0.accuracy.label) · \(session.meanMs > 0 ? "behind the beat" : "ahead of the beat")"
                         } ?? (session.meanMs > 0 ? "behind the beat" : "ahead of the beat"),
-                        color: session.rating?.accuracy.color ?? .primary)
+                        color: session.rating?.accuracy.color ?? .primary,
+                        help: HelpTopics.mean)
                 StatBox(title: "SD (stability)",
                         value: String(format: "%.1f ms", session.sdMs),
                         detail: session.rating?.stability.label ?? "—",
-                        color: session.rating?.stability.color ?? .primary)
+                        color: session.rating?.stability.color ?? .primary,
+                        help: HelpTopics.sd)
                 StatBox(title: "IN TOLERANCE",
                         value: String(format: "%.0f%%", session.pctInTolerance),
                         detail: "\(session.hitCount) hits",
-                        color: .primary)
+                        color: .primary,
+                        help: HelpTopics.inTolerance)
             }
 
             Text(session.verdictText)

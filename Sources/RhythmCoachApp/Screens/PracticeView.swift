@@ -25,6 +25,10 @@ struct PracticeView: View {
                     windowToRecent: transport.isRunning
                 )
                 .frame(minHeight: 120)
+                .overlay(alignment: .topTrailing) {
+                    InfoButton(topic: HelpTopics.deviationScatter)
+                        .padding(6)
+                }
                 LiveRollingChartsView(
                     hits: transport.liveHits,
                     sampleRate: transport.sampleRate,
@@ -36,6 +40,10 @@ struct PracticeView: View {
                 .frame(minHeight: 130)
                 HistogramView(histogram: transport.snapshot.histogram, toleranceMs: transport.toleranceMs)
                     .frame(height: 110)
+                    .overlay(alignment: .topTrailing) {
+                        InfoButton(topic: HelpTopics.histogram)
+                            .padding(6)
+                    }
                 if transport.isEncodingTake {
                     ProgressView("Preparing take audio…")
                         .controlSize(.small)
@@ -257,7 +265,8 @@ struct PracticeView: View {
                     : "MEAN (bias)",
                 value: String(format: "%+.1f ms", meanShown),
                 detail: biasDetail(stats, tier: accuracyTier, meanShown: meanShown, showRolling: showRolling),
-                color: accuracyTier?.color ?? .primary
+                color: accuracyTier?.color ?? .primary,
+                help: HelpTopics.mean
             )
             StatBox(
                 title: showRolling
@@ -265,25 +274,29 @@ struct PracticeView: View {
                     : "SD (stability)",
                 value: String(format: "%.1f ms", sdShown),
                 detail: stabilityDetail(stats, tier: stabilityTier, showRolling: showRolling),
-                color: stabilityTier?.color ?? .primary
+                color: stabilityTier?.color ?? .primary,
+                help: HelpTopics.sd
             )
             StatBox(
                 title: "IN ±\(Int(transport.toleranceMs.rounded())) MS",
                 value: String(format: "%.0f%%", stats.pctInTolerance),
                 detail: "\(stats.hitCount) hits · \(stats.missedCount) missed · \(stats.extraCount) extra",
-                color: .primary
+                color: .primary,
+                help: HelpTopics.inTolerance
             )
             StatBox(
                 title: "DRIFT",
                 value: String(format: "%+.1f ms/min", stats.driftMsPerMin),
                 detail: driftLabel(stats.driftMsPerMin),
-                color: abs(stats.driftMsPerMin) < 5 ? .green : .orange
+                color: abs(stats.driftMsPerMin) < 5 ? .green : .orange,
+                help: HelpTopics.drift
             )
             StatBox(
                 title: "MIN / MAX",
                 value: String(format: "%+.0f / %+.0f", stats.minMs, stats.maxMs),
                 detail: "range \(String(format: "%.0f ms", stats.maxMs - stats.minMs))",
-                color: .primary
+                color: .primary,
+                help: HelpTopics.minMax
             )
         }
     }
@@ -362,8 +375,10 @@ private struct LiveRollingChartsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
             } else {
-                labeledChart(.mean, "Bias — mean of last \(RollingStats.windowHits)", visible, window?.domain)
-                labeledChart(.sd, "Stability — SD of last \(RollingStats.windowHits)", visible, window?.domain)
+                labeledChart(.mean, "Bias — mean of last \(RollingStats.windowHits)",
+                             HelpTopics.biasChart, visible, window?.domain)
+                labeledChart(.sd, "Stability — SD of last \(RollingStats.windowHits)",
+                             HelpTopics.stabilityChart, visible, window?.domain)
             }
         }
     }
@@ -383,13 +398,17 @@ private struct LiveRollingChartsView: View {
         return (points.filter { $0.timeSec >= left }, left...last)
     }
 
-    private func labeledChart(_ metric: RollingMetric, _ title: String,
+    private func labeledChart(_ metric: RollingMetric, _ title: String, _ help: HelpTopic,
                               _ points: [RollingPoint],
                               _ xDomain: ClosedRange<Double>?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                InfoButton(topic: help)
+                Spacer(minLength: 0)
+            }
             RollingStatChart(points: points, slotIOIMs: slotIOIMs, metric: metric,
                              xDomain: xDomain, playback: playback, latencyCompMs: latencyCompMs)
         }
@@ -459,12 +478,18 @@ struct StatBox: View {
     let value: String
     let detail: String
     let color: Color
+    /// When set, a small ⓘ in the corner explains this stat in plain language.
+    /// Left nil for the static export report so no button leaks into the PNG/PDF.
+    var help: HelpTopic? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
+                // Reserve room on the right so a long title never slides under
+                // the corner ⓘ.
+                .padding(.trailing, help == nil ? 0 : 16)
             Text(value)
                 .font(.system(size: 24, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(color)
@@ -476,6 +501,12 @@ struct StatBox: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .topTrailing) {
+            if let help {
+                InfoButton(topic: help)
+                    .padding(6)
+            }
+        }
     }
 }
 
