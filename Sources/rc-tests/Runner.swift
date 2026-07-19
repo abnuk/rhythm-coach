@@ -47,6 +47,14 @@ struct Runner {
         runTest("missed/extra counting") { stats.missedExtra() }
         runTest("rolling SD in snapshot") { stats.rollingSnapshot() }
 
+        suite("Percentiles")
+        let pct = PercentilesTests()
+        runTest("degenerate: empty and single element") { pct.degenerate() }
+        runTest("even count interpolates midpoint") { pct.evenMedian() }
+        runTest("odd count lands on middle") { pct.oddMedian() }
+        runTest("linear-interpolation quartiles") { pct.quartiles() }
+        runTest("order-agnostic") { pct.orderAgnostic() }
+
         suite("TimingRating")
         let rating = TimingRatingTests()
         runTest("floor regime boundaries") { rating.floorRegime() }

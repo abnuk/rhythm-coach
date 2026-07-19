@@ -129,11 +129,15 @@ enum HelpTopics {
     )
 
     static let trendChart = HelpTopic(
-        title: "Your progress over sessions",
+        title: "Your progress over time",
         body: """
-        Your timing across past practice sessions. Blue tracks how steady you were \
-        (SD); orange tracks your early/late lean (mean). Lines heading toward the \
-        center line over time mean you're improving.
+        Each dot is your typical result for that day or week — the middle value \
+        across every take in it, so one odd take can't skew the picture. The \
+        shaded band shows the middle half of your takes: a narrow band means a \
+        consistent stretch, a wide one means you were all over the place. The top \
+        chart is how steady you were (lower is better); the bottom chart is your \
+        early/late lean (right on the beat sits on the center line). Use Day or \
+        Week to zoom the timeline, and switch % / ms to compare across tempos.
         """
     )
 }

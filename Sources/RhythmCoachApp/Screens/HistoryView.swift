@@ -7,6 +7,7 @@ struct HistoryView: View {
     @State private var displayNames: [SessionRecord.ID: String] = [:]
     @State private var selection: SessionRecord.ID?
     @AppStorage("ui.historyTrendMode") private var trendMode: TrendMode = .percent
+    @AppStorage("ui.historyTrendGrouping") private var trendGrouping: TrendGrouping = .day
     @State private var renameTargetID: SessionRecord.ID?
     @State private var renameText = ""
 
@@ -20,8 +21,7 @@ struct HistoryView: View {
         HSplitView {
             VStack(spacing: 0) {
                 if sessions.count >= 2 {
-                    trendChart
-                        .frame(height: 210)
+                    trendChart(trendBuckets)
                         .padding()
                 }
                 List(sessions, selection: $selection) { session in
@@ -118,9 +118,15 @@ struct HistoryView: View {
         trendMode == .percent ? ms / session.slotIOIMs * 100 : ms
     }
 
-    private var trendChart: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
+    private var trendBuckets: [TrendBucket] {
+        TrendBucket.buckets(from: trendSessions, grouping: trendGrouping,
+                            value: { trendValue($0, for: $1) })
+    }
+
+    private func trendChart(_ buckets: [TrendBucket]) -> some View {
+        let unit = trendMode == .percent ? "% of grid IOI" : "ms"
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
                 Picker("Trend units", selection: $trendMode) {
                     ForEach(TrendMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
@@ -128,45 +134,44 @@ struct HistoryView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 220)
+                .fixedSize()
+                Picker("Grouping", selection: $trendGrouping) {
+                    ForEach(TrendGrouping.allCases) { grouping in
+                        Text(grouping.rawValue).tag(grouping)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
                 InfoButton(topic: HelpTopics.trendChart)
             }
-            Chart {
-                ForEach(trendSessions) { session in
-                    LineMark(
-                        x: .value("Date", session.startedAt),
-                        y: .value("SD", trendValue(session.sdMs, for: session)),
-                        series: .value("Metric", "SD (stability)")
-                    )
-                    .foregroundStyle(.blue)
-                    PointMark(
-                        x: .value("Date", session.startedAt),
-                        y: .value("SD", trendValue(session.sdMs, for: session))
-                    )
-                    .foregroundStyle((session.rating?.overall ?? .fair).color)
-                    .symbolSize(40)
-                    LineMark(
-                        x: .value("Date", session.startedAt),
-                        y: .value("Mean", trendValue(session.meanMs, for: session)),
-                        series: .value("Metric", "Mean (bias)")
-                    )
-                    .foregroundStyle(.orange)
-                    PointMark(
-                        x: .value("Date", session.startedAt),
-                        y: .value("Mean", trendValue(session.meanMs, for: session))
-                    )
-                    .foregroundStyle(.orange)
-                    .symbolSize(30)
-                }
-                RuleMark(y: .value("Zero", 0))
-                    .foregroundStyle(.secondary.opacity(0.4))
+            if buckets.count >= 2 {
+                TrendMetricChart(buckets: buckets, metric: .sd, grouping: trendGrouping, unit: unit)
+                    .frame(height: 150)
+                TrendMetricChart(buckets: buckets, metric: .mean, grouping: trendGrouping, unit: unit)
+                    .frame(height: 150)
+            } else {
+                Text(trendEmptyMessage(bucketCount: buckets.count))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 120)
+                    .padding(.horizontal)
             }
-            .chartYAxisLabel(trendMode == .percent ? "% of grid IOI" : "ms")
-            .chartForegroundStyleScale([
-                "SD (stability)": Color.blue,
-                "Mean (bias)": Color.orange,
-            ])
         }
+    }
+
+    /// Shown when the chosen grouping has fewer than two buckets to connect.
+    /// The units/grouping toggles stay visible above, so this is never a dead
+    /// end — the player can always switch back to a view that has data.
+    private func trendEmptyMessage(bucketCount: Int) -> String {
+        if bucketCount == 0 {
+            return "No sessions with a known grid yet — switch to ms to include them."
+        }
+        return trendGrouping == .week
+            ? "Just one week of practice so far. Switch to Day to see it now, or come back after practicing another week."
+            : "Just one day of practice so far. The trend appears once you've practiced on another day."
     }
 }
 
