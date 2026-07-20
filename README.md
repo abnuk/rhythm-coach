@@ -75,6 +75,39 @@ bias/jitter/latency), `analyze` (offline analysis of any WAV against a grid),
 `selftest` (calibrate + score the app's own click through a loopback; asserts
 mean ≤ 2 ms).
 
+## Building a signed release
+
+`make-app.sh` ad-hoc signs by default — fine locally, but Gatekeeper blocks the
+app once it's been downloaded. For distribution the app needs a **Developer ID**
+signature plus notarization. Both scripts read these from the environment, so no
+identifiers or secrets live in the repo:
+
+| Variable | Meaning |
+|---|---|
+| `SIGN_ID` | Developer ID identity (see `security find-identity -v -p codesigning`); empty → ad-hoc |
+| `NOTARY_PROFILE` | `notarytool` keychain profile name; empty → skip notarization |
+
+One-time setup, after enrolling in the Apple Developer Program:
+
+```sh
+# 1. Developer ID Application cert: create a CSR in Keychain Access, upload it at
+#    developer.apple.com -> Certificates, download and import the .cer.
+# 2. Store notary credentials (needs an app-specific password from appleid.apple.com):
+xcrun notarytool store-credentials rc-notary \
+  --apple-id <apple-id> --team-id <TEAMID> --password <app-specific-password>
+```
+
+Build a signed, notarized, stapled DMG + zip:
+
+```sh
+SIGN_ID="Developer ID Application: <Name> (<TEAMID>)" NOTARY_PROFILE=rc-notary \
+  ./Scripts/make-release.sh
+```
+
+The app declares `com.apple.security.device.audio-input` in
+`Resources/RhythmCoach.entitlements` so the microphone keeps working under the
+hardened runtime.
+
 ## Repository layout
 
 ```

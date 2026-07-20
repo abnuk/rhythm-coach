@@ -7,7 +7,7 @@ Marcin chce narzędzia do treningu gitary rytmicznej: aplikacja macOS gra klik (
 ## Decyzje (potwierdzone z użytkownikiem)
 
 - **Sygnał**: gitara elektryczna, czysty DI z interfejsu audio
-- **Stack**: Swift 6 + SwiftUI, macOS 15+ (użytkownik ma macOS 26); nazwa **RhythmCoach**, UI po angielsku, bundle id `com.pragmile.rhythmcoach`
+- **Stack**: Swift 6 + SwiftUI, macOS 15+ (użytkownik ma macOS 26); nazwa **RhythmCoach**, UI po angielsku, bundle id `com.abnuk.rhythmcoach`
 - **Platformy v1**: tylko macOS; rdzeń DSP/statystyki w pakiecie SPM bez zależności od UI/HAL (furtka na iOS)
 - **Funkcje v1**: klik + analiza, trening celowanego offsetu, historia sesji i progres, gap click
 - **Zapis audio sesji**: TAK — WAV, odsłuch + waveform z markerami onsetów, auto-czyszczenie

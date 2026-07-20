@@ -1,11 +1,17 @@
 #!/bin/zsh
 # Builds RhythmCoach.app from the SwiftPM build (no Xcode needed).
 # usage: make-app.sh [debug|release] [--universal]
+#
+# Signing (optional): set SIGN_ID to a Developer ID identity to sign with
+# hardened runtime + entitlements (required for notarization). When empty,
+# falls back to the ad-hoc signature so local builds keep working.
+#   SIGN_ID="Developer ID Application: Name (TEAMID)" ./Scripts/make-app.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 UNIVERSAL="${2:-}"
+SIGN_ID="${SIGN_ID:-}"
 
 APP="dist/RhythmCoach.app"
 rm -rf "$APP"
@@ -52,5 +58,14 @@ PLIST
 
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-codesign --force --sign - "$APP"
+if [[ -n "$SIGN_ID" ]]; then
+    echo "signing with Developer ID: $SIGN_ID"
+    codesign --force --options runtime --timestamp \
+        --entitlements Resources/RhythmCoach.entitlements \
+        --sign "$SIGN_ID" "$APP"
+else
+    echo "ad-hoc signing (set SIGN_ID for a Developer ID signature)"
+    codesign --force --sign - "$APP"
+fi
+codesign --verify --strict "$APP"
 echo "built $APP ($(lipo -archs "$APP/Contents/MacOS/RhythmCoach" 2>/dev/null || echo '?'))"
