@@ -15,6 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION="${1:-1.1.4}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+SIGN_ID="${SIGN_ID:-}"
 
 ./Scripts/make-app.sh release --universal
 APP="dist/RhythmCoach.app"
@@ -41,9 +42,12 @@ rm -rf "$STAGE"
 
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-# Notarize + staple the DMG too, so opening the downloaded image is clean offline.
+# Sign + notarize + staple the DMG too. The DMG must carry its OWN Developer ID
+# signature: an unsigned DMG, even when notarized, fails `spctl -t open` with
+# "no usable signature", so Gatekeeper warns when the downloaded image is opened.
 if [[ -n "$NOTARY_PROFILE" ]]; then
-    echo "notarizing dmg..."
+    echo "signing + notarizing dmg..."
+    [[ -n "$SIGN_ID" ]] && codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
     xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$DMG"
 fi
